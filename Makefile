@@ -5,6 +5,6 @@
 
 PROJECT_NAME := blink
 
-EXTRA_COMPONENT_DIRS = $(IDF_PATH)/examples/common_components/led_strip
-
+#EXTRA_COMPONENT_DIRS = $(IDF_PATH)/examples/common_components/led_strip
+EXTRA_COMPONENT_DIRS = $(IDF_PATH)/examples/common_components/protocol_examples_common
 include $(IDF_PATH)/make/project.mk
