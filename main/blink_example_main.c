@@ -34,11 +34,23 @@
 #include <stdlib.h>
 #include <sys/param.h>
 
+#define BLINK_GPIO 25
+#define DUTY_PERIOD 10
+
+static const char *TAG = "ADC SINGLE";
+
 
 static double temp_f = 0.0;
-static int duty = 0;
-static int duty_period = 10;
+static int duty = 5;
 
+
+static void configure_led(void)
+{
+    ESP_LOGI(TAG, "Example configured to blink GPIO LED!");
+    gpio_reset_pin(BLINK_GPIO);
+    /* Set the GPIO as a push/pull output */
+    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
+}
 
 //ADC Channels
 #if CONFIG_IDF_TARGET_ESP32
@@ -67,7 +79,6 @@ static const char *TAG_CH[2][10] = {{"ADC1_CH2"}, {"ADC2_CH0"}};
 //static double CONSTANTS[] = {0.0007343140544,0.0002157437229,0.0000000951568577};
                             static double CONSTANTS[] = {7.3431401e-4,2.1574370e-4,9.5156860e-8};
 static int adc_raw[2][10];
-static const char *TAG = "ADC SINGLE";
 
 static esp_adc_cal_characteristics_t adc1_chars;
 
@@ -170,6 +181,7 @@ static esp_err_t hello_get_handler(httpd_req_t *req)
             /* Get value of expected key from query string */
             if (httpd_query_key_value(buf, "duty", param, sizeof(param)) == ESP_OK) {
                 ESP_LOGI(TAG, "Found URL query parameter => duty=%s", param);
+                duty = atoi(param);
             }
             if (httpd_query_key_value(buf, "query3", param, sizeof(param)) == ESP_OK) {
                 ESP_LOGI(TAG, "Found URL query parameter => query3=%s", param);
@@ -190,7 +202,7 @@ static esp_err_t hello_get_handler(httpd_req_t *req)
     const char* resp_str = (const char*) req->user_ctx;
    char str[80];
 
-   sprintf(str, "Hello! Temp %f", temp_f);
+   sprintf(str, "Temp: %f\nDuty: %d", temp_f, duty);
 
 
     httpd_resp_send(req, str, HTTPD_RESP_USE_STRLEN);
@@ -374,6 +386,7 @@ static void connect_handler(void* arg, esp_event_base_t event_base,
 
 void app_main(void)
 {
+    configure_led();
     static httpd_handle_t server = NULL;
 
 
@@ -406,11 +419,17 @@ void app_main(void)
 
     int tick = 0;
     while (1) {
+        /* Set the GPIO level according to the state (LOW or HIGH)*/
+        bool set_fan = tick % DUTY_PERIOD < duty;
+        gpio_set_level(BLINK_GPIO, set_fan);
+        ESP_LOGI(TAG, "setting fan: %d, duty = %d", (int)set_fan, duty);
+
+
         adc_raw[0][0] = adc1_get_raw(ADC1_EXAMPLE_CHAN0);
-        ESP_LOGI(TAG_CH[0][0], "raw  data: %d", adc_raw[0][0]);
+        // ESP_LOGI(TAG_CH[0][0], "raw  data: %d", adc_raw[0][0]);
         if (cali_enable) {
             voltage = esp_adc_cal_raw_to_voltage(adc_raw[0][0], &adc1_chars);
-            ESP_LOGI(TAG_CH[0][0], "cali data: %d mV", voltage);
+            // ESP_LOGI(TAG_CH[0][0], "cali data: %d mV", voltage);
 
 
             // V = Vprobe + Vres
@@ -420,11 +439,11 @@ void app_main(void)
             // Rprobe = Vprobe * Rres / Vres 
             // Rprobe = Vprobe * 10000 / (3000 - Vprobe)
             double r_probe_ohm = ((double)voltage) * 10000.0 / (3300.0 - ((double)voltage));
-            ESP_LOGI(TAG_CH[0][0], "resistance: %f ohm", r_probe_ohm);
+            // ESP_LOGI(TAG_CH[0][0], "resistance: %f ohm", r_probe_ohm);
 
             double log_r = log(r_probe_ohm);
             double temp_k = 1.0/(CONSTANTS[0] + CONSTANTS[1] * log_r + CONSTANTS[2]*log_r*log_r*log_r);
-            ESP_LOGI(TAG_CH[0][0], "temp_k: %f", temp_k);
+            // ESP_LOGI(TAG_CH[0][0], "temp_k: %f", temp_k);
             temp_f = (temp_k - 273.15)* 9/5 + 32;
             ESP_LOGI(TAG_CH[0][0], "temp_f: %f", temp_f);
             
