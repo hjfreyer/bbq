@@ -36,11 +36,57 @@ menu "Example Configuration"
             GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
             Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
 
-    config BLINK_PERIOD
-        int "Blink period in ms"
+    config PROBE1_GPIO
+        int "GPIO for probe 1"
+        range 32 39
+        default 32
+        help
+            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
+            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+
+    config PROBE2_GPIO
+        int "GPIO for probe 2"
+        range 32 39
+        default 32
+        help
+            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
+            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+                                   
+    config VREF_GPIO
+        int "GPIO for the reference voltage reading"
+        range 32 39
+        default 5
+        help
+            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
+            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+
+    config PROBE_RESISTOR_OHMS
+        int "Value of the resistor connected to the probe, in ohms"
+        default 10000
+        help
+            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
+            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+        
+    config FAN_CONTROL_GPIO
+        int "GPIO to control the fan"
+        range 0 48
+        default 5
+        help
+            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
+            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+                
+    config TICK_PERIOD
+        int "Tick duration in milliseconds"
         range 10 3600000
-        default 1000
+        default 100
         help
             Define the blinking period in milliseconds.
-
+        
+    config DUTY_PERIOD
+        int "Duty cycle length in ticks"
+        range 10 100000
+        default 100
+        help
+            Define the blinking period in milliseconds.
+        
 endmenu
