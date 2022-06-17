@@ -88,5 +88,5 @@ menu "Example Configuration"
         default 100
         help
             Define the blinking period in milliseconds.
-        
+    
 endmenu

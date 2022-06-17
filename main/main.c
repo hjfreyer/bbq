@@ -37,9 +37,15 @@
 
 static const char *TAG = "BBQ";
 
+static bool s_fan_manual = false;
+static double s_fan_manual_duty = 0;
+static double s_fan_automatic_duty = 0.7;
+static double s_fan_threshold_f = 215.0;
+
 static double s_probe1_temp_f = 0;
 static double s_probe2_temp_f = 0;
-static int s_duty = 30;
+static double s_current_duty = 0;
+
 static esp_adc_cal_characteristics_t s_adc1_chars;
 
 #define ADC1_FROM_GPIO_IMPL(gpio) ADC1_GPIO##gpio##_CHANNEL
@@ -52,7 +58,6 @@ static esp_adc_cal_characteristics_t s_adc1_chars;
 #define FAN_CONTROL_GPIO CONFIG_FAN_CONTROL_GPIO
 
 #define PROBE_RESISTOR_OHMS CONFIG_PROBE_RESISTOR_OHMS
-
 
 // ADC Attenuation
 #define ADC_EXAMPLE_ATTEN ADC_ATTEN_DB_11
@@ -70,6 +75,32 @@ static esp_adc_cal_characteristics_t s_adc1_chars;
 
 static double STEINHART_COEFFS[] = {7.3431401e-4, 2.1574370e-4, 9.5156860e-8};
 
+// static double fan_duty() {
+//     if (s_fan_manual) {
+//         return s_fan_manual_duty;
+//     }
+
+//     double ret = s_fan_ki * s_error_integral + s_fan_kp * (s_set_point_f - s_probe1_temp_f);
+//     if (ret < 0.1) {
+//         return 0;
+//     }
+//         return ret;
+// }
+
+static double fan_duty()
+{
+    if (s_fan_manual)
+    {
+        return s_fan_manual_duty;
+    }
+
+    if (s_probe1_temp_f < s_fan_threshold_f)
+    {
+        return s_fan_automatic_duty;
+    }
+
+    return 0;
+}
 
 void start_mdns_service()
 {
@@ -102,144 +133,109 @@ void start_mdns_service()
  */
 
 /* An HTTP GET handler */
-static esp_err_t hello_get_handler(httpd_req_t *req)
+static esp_err_t index_get_handler(httpd_req_t *req)
 {
-    char *buf;
-    size_t buf_len;
-
-    /* Get header value string length and allocate memory for length + 1,
-     * extra byte for null termination */
-    buf_len = httpd_req_get_hdr_value_len(req, "Host") + 1;
-    if (buf_len > 1)
-    {
-        buf = malloc(buf_len);
-        /* Copy null terminated value string into buffer */
-        if (httpd_req_get_hdr_value_str(req, "Host", buf, buf_len) == ESP_OK)
-        {
-            ESP_LOGI(TAG, "Found header => Host: %s", buf);
-        }
-        free(buf);
-    }
-
-    buf_len = httpd_req_get_hdr_value_len(req, "Test-Header-2") + 1;
-    if (buf_len > 1)
-    {
-        buf = malloc(buf_len);
-        if (httpd_req_get_hdr_value_str(req, "Test-Header-2", buf, buf_len) == ESP_OK)
-        {
-            ESP_LOGI(TAG, "Found header => Test-Header-2: %s", buf);
-        }
-        free(buf);
-    }
-
-    buf_len = httpd_req_get_hdr_value_len(req, "Test-Header-1") + 1;
-    if (buf_len > 1)
-    {
-        buf = malloc(buf_len);
-        if (httpd_req_get_hdr_value_str(req, "Test-Header-1", buf, buf_len) == ESP_OK)
-        {
-            ESP_LOGI(TAG, "Found header => Test-Header-1: %s", buf);
-        }
-        free(buf);
-    }
-
-    /* Read URL query string length and allocate memory for length + 1,
-     * extra byte for null termination */
-    buf_len = httpd_req_get_url_query_len(req) + 1;
-    if (buf_len > 1)
-    {
-        buf = malloc(buf_len);
-        if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK)
-        {
-            ESP_LOGI(TAG, "Found URL query => %s", buf);
-            char param[32];
-            /* Get value of expected key from query string */
-            if (httpd_query_key_value(buf, "duty", param, sizeof(param)) == ESP_OK)
-            {
-                ESP_LOGI(TAG, "Found URL query parameter => duty=%s", param);
-                s_duty = atoi(param);
-            }
-            if (httpd_query_key_value(buf, "query3", param, sizeof(param)) == ESP_OK)
-            {
-                ESP_LOGI(TAG, "Found URL query parameter => query3=%s", param);
-            }
-            if (httpd_query_key_value(buf, "query2", param, sizeof(param)) == ESP_OK)
-            {
-                ESP_LOGI(TAG, "Found URL query parameter => query2=%s", param);
-            }
-        }
-        free(buf);
-    }
-
-    /* Set some custom headers */
-    httpd_resp_set_hdr(req, "Custom-Header-1", "Custom-Value-1");
-    httpd_resp_set_hdr(req, "Custom-Header-2", "Custom-Value-2");
-
     /* Send response with custom headers and body set as the
      * string passed in user context*/
-    const char *resp_str = (const char *)req->user_ctx;
-    char str[80];
+    char resp[2048];
 
-    sprintf(str, "Temp: %f\nDuty: %d", 666.0, s_duty);
+    snprintf(resp, sizeof(resp), "{"
+                                 "\"probe1_f\": %f,"
+                                 "\"probe2_f\": %f,"
+                                 "\"duty\": %f"
+                                 "}\n",
+             s_probe1_temp_f,
+             s_probe2_temp_f,
+             s_current_duty);
 
-    httpd_resp_send(req, str, HTTPD_RESP_USE_STRLEN);
-
-    /* After sending the HTTP response the old HTTP request
-     * headers are lost. Check if HTTP request headers can be read now. */
-    if (httpd_req_get_hdr_value_len(req, "Host") == 0)
-    {
-        ESP_LOGI(TAG, "Request headers lost");
-    }
+    httpd_resp_set_hdr(req, "content-type", "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
-static const httpd_uri_t hello = {
-    .uri = "/hello",
+static size_t settings_json(char *buf, size_t buf_len)
+{
+    return snprintf(buf, buf_len, "{"
+                                  "\"manual\": %d,"
+                                  "\"manual_duty\": %f,"
+                                  "\"threshold_f\": %f,"
+                                  "\"automatic_duty\": %f"
+                                  "}\n",
+                    s_fan_manual,
+                    s_fan_manual_duty,
+                    s_fan_threshold_f,
+                    s_fan_automatic_duty);
+}
+
+static const httpd_uri_t index_get = {
+    .uri = "/",
     .method = HTTP_GET,
-    .handler = hello_get_handler,
+    .handler = index_get_handler,
+    /* Let's pass response string in user
+     * context to demonstrate it's usage */
+    .user_ctx = "Hello World!"};
+
+/* An HTTP GET handler */
+static esp_err_t settings_get_handler(httpd_req_t *req)
+{
+    char resp[2048];
+    settings_json(resp, sizeof(resp));
+    httpd_resp_set_hdr(req, "content-type", "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static const httpd_uri_t settings_get = {
+    .uri = "/settings",
+    .method = HTTP_GET,
+    .handler = settings_get_handler,
     /* Let's pass response string in user
      * context to demonstrate it's usage */
     .user_ctx = "Hello World!"};
 
 /* An HTTP POST handler */
-static esp_err_t echo_post_handler(httpd_req_t *req)
+static esp_err_t settings_post_handler(httpd_req_t *req)
 {
-    char buf[100];
-    int ret, remaining = req->content_len;
-
-    while (remaining > 0)
+    /* Read URL query string length and allocate memory for length + 1,
+     * extra byte for null termination */
+    size_t buf_len = httpd_req_get_url_query_len(req) + 1;
+    if (buf_len > 1)
     {
-        /* Read the data for the request */
-        if ((ret = httpd_req_recv(req, buf,
-                                  MIN(remaining, sizeof(buf)))) <= 0)
+        char *buf = malloc(buf_len);
+        if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK)
         {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT)
+            char param[32];
+            if (httpd_query_key_value(buf, "manual", param, sizeof(param)) == ESP_OK)
             {
-                /* Retry receiving if timeout occurred */
-                continue;
+                s_fan_manual = atoi(param);
             }
-            return ESP_FAIL;
+            if (httpd_query_key_value(buf, "manual_duty", param, sizeof(param)) == ESP_OK)
+            {
+                s_fan_manual_duty = atof(param);
+            }
+            if (httpd_query_key_value(buf, "threshold_f", param, sizeof(param)) == ESP_OK)
+            {
+                s_fan_threshold_f = atof(param);
+            }
+            if (httpd_query_key_value(buf, "automatic_duty", param, sizeof(param)) == ESP_OK)
+            {
+                s_fan_automatic_duty = atof(param);
+            }
         }
-
-        /* Send back the same data */
-        httpd_resp_send_chunk(req, buf, ret);
-        remaining -= ret;
-
-        /* Log data received */
-        ESP_LOGI(TAG, "=========== RECEIVED DATA ==========");
-        ESP_LOGI(TAG, "%.*s", ret, buf);
-        ESP_LOGI(TAG, "====================================");
+        free(buf);
     }
 
-    // End response
-    httpd_resp_send_chunk(req, NULL, 0);
+    char resp[2048];
+    settings_json(resp, sizeof(resp));
+    httpd_resp_set_hdr(req, "content-type", "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
-static const httpd_uri_t echo = {
-    .uri = "/echo",
+static const httpd_uri_t settings_post = {
+    .uri = "/settings",
     .method = HTTP_POST,
-    .handler = echo_post_handler,
+    .handler = settings_post_handler,
     .user_ctx = NULL};
 
 /* This handler allows the custom error handling functionality to be
@@ -284,11 +280,9 @@ static httpd_handle_t start_webserver(void)
     {
         // Set URI handlers
         ESP_LOGI(TAG, "Registering URI handlers");
-        httpd_register_uri_handler(server, &hello);
-        httpd_register_uri_handler(server, &echo);
-#if CONFIG_EXAMPLE_BASIC_AUTH
-        httpd_register_basic_auth(server);
-#endif
+        httpd_register_uri_handler(server, &index_get);
+        httpd_register_uri_handler(server, &settings_get);
+        httpd_register_uri_handler(server, &settings_post);
         return server;
     }
 
@@ -384,10 +378,16 @@ void app_main(void)
     int tick = 0;
     while (1)
     {
+        if (tick % CONFIG_DUTY_PERIOD == 0)
+        {
+            s_current_duty = fan_duty();
+        ESP_LOGI(TAG, "setting duty = %f", s_current_duty);
+        // ESP_LOGI(TAG, "v_p1: %d, v_p2: %d, v_ref: %d", probe1_voltage, probe2_voltage, ref_voltage);
+        ESP_LOGI(TAG, "temp1_f: %f, temp2_f: %f", s_probe1_temp_f, s_probe2_temp_f);
+        }
         /* Set the GPIO level according to the state (LOW or HIGH)*/
-        bool set_fan = tick % CONFIG_DUTY_PERIOD < s_duty;
+        bool set_fan = tick % CONFIG_DUTY_PERIOD < s_current_duty * CONFIG_DUTY_PERIOD;
         gpio_set_level(FAN_CONTROL_GPIO, set_fan);
-        ESP_LOGI(TAG, "setting fan: %d, duty = %d", (int)set_fan, s_duty);
 
         int probe1_raw = adc1_get_raw(ADC1_PROBE1_CHAN);
         int probe2_raw = adc1_get_raw(ADC1_PROBE2_CHAN);
@@ -400,10 +400,12 @@ void app_main(void)
         double probe1_temp_f = probe_temp_f(probe1_voltage, ref_voltage);
         double probe2_temp_f = probe_temp_f(probe2_voltage, ref_voltage);
 
-        ESP_LOGI(TAG, "v_p1: %d, v_p2: %d, v_ref: %d", probe1_voltage, probe2_voltage, ref_voltage);
-        ESP_LOGI(TAG, "temp1_f: %f, temp2_f: %f", probe1_temp_f, probe2_temp_f);
+        // Exponential moving average.
+        s_probe1_temp_f = (s_probe1_temp_f + probe1_temp_f) / 2;
+        s_probe2_temp_f = (s_probe2_temp_f + probe2_temp_f) / 2;
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+
+        vTaskDelay(pdMS_TO_TICKS(CONFIG_TICK_PERIOD));
         tick += 1;
     }
 }
