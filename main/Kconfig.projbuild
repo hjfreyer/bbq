@@ -89,4 +89,7 @@ menu "Example Configuration"
         help
             Define the blinking period in milliseconds.
     
+    config REMOTE_ENDPOINT
+        string "URL of remote endpoint"
+        
 endmenu

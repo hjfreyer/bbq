@@ -132,6 +132,50 @@ void start_mdns_service()
  * handlers for the web server.
  */
 
+struct StringBuffer
+{
+    char *buffer;
+    size_t buflen;
+    size_t written;
+};
+// void myfun(const char *fmt, va_list argp) {
+//     vfprintf(stderr, fmt, argp);
+// }
+
+static bool sb_format(struct StringBuffer *buffer, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    if (buffer->written < buffer->buflen)
+    {
+        buffer->written += vsnprintf(buffer->buffer + buffer->written, buffer->buflen - buffer->written, fmt, args);
+    }
+    va_end(args);
+    return buffer->written < buffer->buflen;
+}
+
+static void get_stats(char *buf, size_t buflen)
+{
+    struct StringBuffer sb = {.buffer = buf,
+                              .buflen = buflen,
+                              .written = 0};
+
+#define APPEND_JSON(field, fmt, value) \
+    sb_format(&sb, "\"" field "\": " fmt ",", value)
+
+#define APPEND_GLOBAL_JSON(field, fmt) \
+    sb_format(&sb, "\"" #field "\": " fmt ",", s_##field)
+
+    int64_t uptime_usec = esp_timer_get_time();
+
+    sb_format(&sb, "{");
+    APPEND_GLOBAL_JSON(probe1_temp_f, "%f");
+    APPEND_GLOBAL_JSON(probe2_temp_f, "%f");
+    APPEND_GLOBAL_JSON(current_duty, "%f");
+    APPEND_JSON("uptime_usec", "%lld", uptime_usec);
+    sb_format(&sb, "}");
+}
+
 /* An HTTP GET handler */
 static esp_err_t index_get_handler(httpd_req_t *req)
 {
@@ -139,14 +183,7 @@ static esp_err_t index_get_handler(httpd_req_t *req)
      * string passed in user context*/
     char resp[2048];
 
-    snprintf(resp, sizeof(resp), "{"
-                                 "\"probe1_f\": %f,"
-                                 "\"probe2_f\": %f,"
-                                 "\"duty\": %f"
-                                 "}\n",
-             s_probe1_temp_f,
-             s_probe2_temp_f,
-             s_current_duty);
+    get_stats(&resp, sizeof(resp));
 
     httpd_resp_set_hdr(req, "content-type", "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
@@ -381,9 +418,9 @@ void app_main(void)
         if (tick % CONFIG_DUTY_PERIOD == 0)
         {
             s_current_duty = fan_duty();
-        ESP_LOGI(TAG, "setting duty = %f", s_current_duty);
-        // ESP_LOGI(TAG, "v_p1: %d, v_p2: %d, v_ref: %d", probe1_voltage, probe2_voltage, ref_voltage);
-        ESP_LOGI(TAG, "temp1_f: %f, temp2_f: %f", s_probe1_temp_f, s_probe2_temp_f);
+            ESP_LOGI(TAG, "setting duty = %f", s_current_duty);
+            // ESP_LOGI(TAG, "v_p1: %d, v_p2: %d, v_ref: %d", probe1_voltage, probe2_voltage, ref_voltage);
+            ESP_LOGI(TAG, "temp1_f: %f, temp2_f: %f", s_probe1_temp_f, s_probe2_temp_f);
         }
         /* Set the GPIO level according to the state (LOW or HIGH)*/
         bool set_fan = tick % CONFIG_DUTY_PERIOD < s_current_duty * CONFIG_DUTY_PERIOD;
@@ -403,7 +440,6 @@ void app_main(void)
         // Exponential moving average.
         s_probe1_temp_f = (s_probe1_temp_f + probe1_temp_f) / 2;
         s_probe2_temp_f = (s_probe2_temp_f + probe2_temp_f) / 2;
-
 
         vTaskDelay(pdMS_TO_TICKS(CONFIG_TICK_PERIOD));
         tick += 1;
