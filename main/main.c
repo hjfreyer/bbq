@@ -1,20 +1,8 @@
-/*
- * SPDX-FileCopyrightText: 2021 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Apache-2.0
- */
+// ESP32 BBQ thermometer.
 
-/* ADC1 Example
-
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
-
-#include "driver/adc.h"
 #include "esp_adc_cal.h"
+#include <sys/param.h>
+#include "driver/adc.h"
 #include "esp_eth.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -35,19 +23,15 @@
 #include <sys/param.h>
 #include <soc/adc_channel.h>
 
+#include "state.h"
+#include "stringbuffer.h"
 
 #define RESPONSE_BUFFER_SIZE 1024
 
 static const char *TAG = "BBQ";
 
-static bool s_fan_manual = false;
-static double s_fan_manual_duty = 0;
-static double s_fan_automatic_duty = 0.7;
-static double s_fan_threshold_f = CONFIG_INITIAL_THRESHOLD;
-
-static double s_probe1_temp_f = 0;
-static double s_probe2_temp_f = 0;
-static double s_current_duty = 0;
+static struct Settings s_settings;
+static struct State s_state;
 
 static esp_adc_cal_characteristics_t s_adc1_chars;
 
@@ -76,6 +60,12 @@ static esp_adc_cal_characteristics_t s_adc1_chars;
 #define ADC_EXAMPLE_CALI_SCHEME ESP_ADC_CAL_VAL_EFUSE_TP_FIT
 #endif
 
+#define APPEND_JSON(sb, field, fmt, value) \
+    sb_format(&sb, "\"" field "\": " fmt, value)
+
+#define APPEND_JSON_FIELD(sb, struct, field, fmt) \
+    sb_format(&sb, "\"" #field "\": " fmt, struct->field)
+
 static double STEINHART_COEFFS[] = {7.3431401e-4, 2.1574370e-4, 9.5156860e-8};
 
 // static double fan_duty() {
@@ -90,16 +80,16 @@ static double STEINHART_COEFFS[] = {7.3431401e-4, 2.1574370e-4, 9.5156860e-8};
 //         return ret;
 // }
 
-static double fan_duty()
+static uint8_t fan_duty()
 {
-    if (s_fan_manual)
+    if (s_settings.is_manual)
     {
-        return s_fan_manual_duty;
+        return s_settings.manual_duty_pct;
     }
 
-    if (s_probe1_temp_f < s_fan_threshold_f)
+    if (s_state.probe1_f < s_settings.threshold_f)
     {
-        return s_fan_automatic_duty;
+        return s_settings.automatic_duty_pct;
     }
 
     return 0;
@@ -135,47 +125,15 @@ void start_mdns_service()
  * handlers for the web server.
  */
 
-struct StringBuffer
+static void state_json(char *buf, size_t buflen, struct State *state)
 {
-    char *buffer;
-    size_t buflen;
-    size_t written;
-};
-// void myfun(const char *fmt, va_list argp) {
-//     vfprintf(stderr, fmt, argp);
-// }
-
-static bool sb_format(struct StringBuffer *buffer, const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-    if (buffer->written < buffer->buflen)
-    {
-        buffer->written += vsnprintf(buffer->buffer + buffer->written, buffer->buflen - buffer->written, fmt, args);
-    }
-    va_end(args);
-    return buffer->written < buffer->buflen;
-}
-
-static void get_stats(char *buf, size_t buflen)
-{
-    struct StringBuffer sb = {.buffer = buf,
-                              .buflen = buflen,
-                              .written = 0};
-
-#define APPEND_JSON(field, fmt, value) \
-    sb_format(&sb, "\"" field "\": " fmt ",", value)
-
-#define APPEND_GLOBAL_JSON(field, fmt) \
-    sb_format(&sb, "\"" #field "\": " fmt ",", s_##field)
-
-    int64_t uptime_usec = esp_timer_get_time();
+    struct StringBuffer sb = sb_create(buf, buflen);
 
     sb_format(&sb, "{");
-    APPEND_GLOBAL_JSON(probe1_temp_f, "%f");
-    APPEND_GLOBAL_JSON(probe2_temp_f, "%f");
-    APPEND_GLOBAL_JSON(current_duty, "%f");
-    APPEND_JSON("uptime_usec", "%lld", uptime_usec);
+    APPEND_JSON_FIELD(sb, state, probe1_f, "%d,");
+    APPEND_JSON_FIELD(sb, state, probe2_f, "%d,");
+    APPEND_JSON_FIELD(sb, state, duty_pct, "%d,");
+    APPEND_JSON(sb, "uptime_usec", "%lld", esp_timer_get_time());
     sb_format(&sb, "}");
 }
 
@@ -184,27 +142,25 @@ static esp_err_t index_get_handler(httpd_req_t *req)
 {
     /* Send response with custom headers and body set as the
      * string passed in user context*/
-    char resp[2048];
+    char resp[RESPONSE_BUFFER_SIZE];
 
-    get_stats(&resp, sizeof(resp));
+    state_json(resp, sizeof(resp), &s_state);
 
     httpd_resp_set_hdr(req, "content-type", "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
-static size_t settings_json(char *buf, size_t buf_len)
+static void settings_json(char *buf, size_t buflen, struct Settings *settings)
 {
-    return snprintf(buf, buf_len, "{"
-                                  "\"manual\": %d,"
-                                  "\"manual_duty\": %f,"
-                                  "\"threshold_f\": %f,"
-                                  "\"automatic_duty\": %f"
-                                  "}\n",
-                    s_fan_manual,
-                    s_fan_manual_duty,
-                    s_fan_threshold_f,
-                    s_fan_automatic_duty);
+    struct StringBuffer sb = sb_create(buf, buflen);
+
+    sb_format(&sb, "{");
+    APPEND_JSON_FIELD(sb, settings, is_manual, "%d,");
+    APPEND_JSON_FIELD(sb, settings, manual_duty_pct, "%d,");
+    APPEND_JSON_FIELD(sb, settings, threshold_f, "%d,");
+    APPEND_JSON_FIELD(sb, settings, automatic_duty_pct, "%d");
+    sb_format(&sb, "}");
 }
 
 static const httpd_uri_t index_get = {
@@ -219,7 +175,7 @@ static const httpd_uri_t index_get = {
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     char resp[RESPONSE_BUFFER_SIZE];
-    settings_json(resp, sizeof(resp));
+    settings_json(resp, sizeof(resp), &s_settings);
     httpd_resp_set_hdr(req, "content-type", "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -245,28 +201,28 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
         if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK)
         {
             char param[32];
-            if (httpd_query_key_value(buf, "manual", param, sizeof(param)) == ESP_OK)
+            if (httpd_query_key_value(buf, "is_manual", param, sizeof(param)) == ESP_OK)
             {
-                s_fan_manual = atoi(param);
+                s_settings.is_manual = atoi(param);
             }
-            if (httpd_query_key_value(buf, "manual_duty", param, sizeof(param)) == ESP_OK)
+            if (httpd_query_key_value(buf, "manual_duty_pct", param, sizeof(param)) == ESP_OK)
             {
-                s_fan_manual_duty = atof(param);
+                s_settings.manual_duty_pct = atoi(param);
             }
             if (httpd_query_key_value(buf, "threshold_f", param, sizeof(param)) == ESP_OK)
             {
-                s_fan_threshold_f = atof(param);
+                s_settings.threshold_f = atoi(param);
             }
             if (httpd_query_key_value(buf, "automatic_duty", param, sizeof(param)) == ESP_OK)
             {
-                s_fan_automatic_duty = atof(param);
+                s_settings.automatic_duty_pct = atoi(param);
             }
         }
         free(buf);
     }
 
     char resp[RESPONSE_BUFFER_SIZE];
-    settings_json(resp, sizeof(resp));
+    settings_json(resp, sizeof(resp), &s_settings);
     httpd_resp_set_hdr(req, "content-type", "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -313,7 +269,7 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
-    config.stack_size = 1<<13; // 8k
+    // config.stack_size = 1<<13; // 8k
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -378,6 +334,8 @@ static double probe_temp_f(double probe_mv, double ref_mv)
 
 static void init(void)
 {
+    s_settings = settings_create();
+
     // Network.
 
     ESP_ERROR_CHECK(nvs_flash_init());
@@ -421,13 +379,13 @@ void app_main(void)
     {
         if (tick % CONFIG_DUTY_PERIOD == 0)
         {
-            s_current_duty = fan_duty();
-            ESP_LOGI(TAG, "setting duty = %f", s_current_duty);
+            s_state.duty_pct = fan_duty();
+            ESP_LOGI(TAG, "setting duty = %d%%", s_state.duty_pct);
             // ESP_LOGI(TAG, "v_p1: %d, v_p2: %d, v_ref: %d", probe1_voltage, probe2_voltage, ref_voltage);
-            ESP_LOGI(TAG, "temp1_f: %f, temp2_f: %f", s_probe1_temp_f, s_probe2_temp_f);
+            ESP_LOGI(TAG, "temp1_f: %d, temp2_f: %d", s_state.probe1_f, s_state.probe2_f);
         }
         /* Set the GPIO level according to the state (LOW or HIGH)*/
-        bool set_fan = tick % CONFIG_DUTY_PERIOD < s_current_duty * CONFIG_DUTY_PERIOD;
+        bool set_fan = tick % CONFIG_DUTY_PERIOD < s_state.duty_pct * CONFIG_DUTY_PERIOD / 100;
         gpio_set_level(FAN_CONTROL_GPIO, set_fan);
 
         int probe1_raw = adc1_get_raw(ADC1_PROBE1_CHAN);
@@ -438,19 +396,17 @@ void app_main(void)
         uint32_t probe2_voltage = esp_adc_cal_raw_to_voltage(probe2_raw, &s_adc1_chars);
         uint32_t ref_voltage = esp_adc_cal_raw_to_voltage(vref_raw, &s_adc1_chars);
 
-        double probe1_temp_f = probe_temp_f(probe1_voltage, ref_voltage);
-        double probe2_temp_f = probe_temp_f(probe2_voltage, ref_voltage);
+        double probe1_f = probe_temp_f(probe1_voltage, ref_voltage);
+        double probe2_f = probe_temp_f(probe2_voltage, ref_voltage);
 
         // Exponential moving average.
-        s_probe1_temp_f = (s_probe1_temp_f + probe1_temp_f) / 2;
-        s_probe2_temp_f = (s_probe2_temp_f + probe2_temp_f) / 2;
+        s_state.probe1_f = (s_state.probe1_f + probe1_f) / 2;
+        s_state.probe2_f = (s_state.probe2_f + probe2_f) / 2;
 
         vTaskDelay(pdMS_TO_TICKS(CONFIG_TICK_PERIOD));
         tick += 1;
     }
 }
-
-
 
 // #include <string.h>
 // #include <stdlib.h>
@@ -581,8 +537,6 @@ void app_main(void)
 //     };
 //     https_get_request(cfg);
 // }
-
-
 
 // static void https_get_request_using_cacert_buf(void)
 // {
