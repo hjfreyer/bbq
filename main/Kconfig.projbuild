@@ -91,5 +91,8 @@ menu "Example Configuration"
     
     config REMOTE_ENDPOINT
         string "URL of remote endpoint"
-        
+    
+    config INITIAL_THRESHOLD
+        int "Initial threshold (deg F)"
+        default 225
 endmenu
