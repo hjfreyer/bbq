@@ -1,98 +1,43 @@
-menu "Example Configuration"
-
-    choice BLINK_LED
-        prompt "Blink LED type"
-        default BLINK_LED_GPIO if IDF_TARGET_ESP32
-        default BLINK_LED_RMT
-        help
-            Defines the default peripheral for blink example
-
-        config BLINK_LED_GPIO
-            bool "GPIO"
-        config BLINK_LED_RMT
-            bool "RMT - Addressable LED"
-    endchoice
-
-    config BLINK_LED_RMT_CHANNEL
-        depends on BLINK_LED_RMT
-        int "RMT Channel"
-        range 0 7
-        default 0
-        help
-            Set the RMT peripheral channel.
-            ESP32 RMT channel from 0 to 7
-            ESP32-S2 RMT channel from 0 to 3
-            ESP32-S3 RMT channel from 0 to 3
-            ESP32-C3 RMT channel from 0 to 1
-
-    config BLINK_GPIO
-        int "Blink GPIO number"
-        range 0 48
-        default 8 if IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32H2
-        default 18 if IDF_TARGET_ESP32S2
-        default 48 if IDF_TARGET_ESP32S3
-        default 5
-        help
-            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
-            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
-
+menu "BBQ Configuration"
     config PROBE1_GPIO
-        int "GPIO for probe 1"
+        int "GPIO for probe 1 ADC"
         range 32 39
-        default 32
-        help
-            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
-            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+        default 35
 
     config PROBE2_GPIO
-        int "GPIO for probe 2"
+        int "GPIO for probe 2 ADC"
         range 32 39
-        default 32
-        help
-            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
-            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+        default 36
                                    
     config VREF_GPIO
-        int "GPIO for the reference voltage reading"
+        int "GPIO for the reference voltage reading ADC"
         range 32 39
-        default 5
-        help
-            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
-            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+        default 34
 
     config PROBE_RESISTOR_OHMS
         int "Value of the resistor connected to the probe, in ohms"
         default 10000
-        help
-            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
-            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
         
     config FAN_CONTROL_GPIO
         int "GPIO to control the fan"
         range 0 48
-        default 5
-        help
-            GPIO number (IOxx) to blink on and off or the RMT signal for the addressable LED.
-            Some GPIOs are used for other purposes (flash connections, etc.) and cannot be used to blink.
+        default 27
                 
     config TICK_PERIOD
         int "Tick duration in milliseconds"
         range 10 3600000
         default 100
-        help
-            Define the blinking period in milliseconds.
         
     config DUTY_PERIOD
         int "Duty cycle length in ticks"
         range 10 100000
         default 100
-        help
-            Define the blinking period in milliseconds.
     
     config REMOTE_ENDPOINT
         string "URL of remote endpoint"
-    
-    config INITIAL_THRESHOLD
+        default "https://bbqbe.hjfreyer.repl.co/device"
+
+        config INITIAL_THRESHOLD
         int "Initial threshold (deg F)"
         default 225
 endmenu
