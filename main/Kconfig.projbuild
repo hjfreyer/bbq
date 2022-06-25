@@ -27,17 +27,22 @@ menu "BBQ Configuration"
         int "Tick duration in milliseconds"
         range 10 3600000
         default 100
-        
+
     config DUTY_PERIOD
         int "Duty cycle length in ticks"
         range 10 100000
         default 100
-    
-    config REMOTE_ENDPOINT
-        string "URL of remote endpoint"
-        default "https://bbqbe.hjfreyer.repl.co/device"
 
-        config INITIAL_THRESHOLD
+    config REPORT_PERIOD
+        int "Report period in ticks"
+        range 1 3600000
+        default 50
+
+    config DATA_ENDPOINT
+        string "URL to push data"
+        default "https://bbqbe.hjfreyer.repl.co/device/data"
+
+    config INITIAL_THRESHOLD
         int "Initial threshold (deg F)"
         default 225
 endmenu
