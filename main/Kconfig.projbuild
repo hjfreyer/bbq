@@ -33,6 +33,11 @@ menu "BBQ Configuration"
         range 10 100000
         default 100
 
+    config TEMP_BUFFER_LEN
+        int "Smooth over this many ticks worth of data for temp"
+        range 1 100000
+        default 20
+
     config REPORT_PERIOD
         int "Report period in ticks"
         range 1 3600000
@@ -40,7 +45,7 @@ menu "BBQ Configuration"
 
     config DATA_ENDPOINT
         string "URL to push data"
-        default "https://bbqbe.hjfreyer.repl.co/device/data"
+        default "https://bbqbe.hjfreyer.repl.co/device"
 
     config INITIAL_THRESHOLD
         int "Initial threshold (deg F)"

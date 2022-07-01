@@ -1,10 +1,20 @@
 
 #pragma once
 
+struct Readings {
+    uint32_t reference_voltage_mv;
+    uint32_t probe_voltage_mv[2];
+};
+
+struct RawState
+{
+    uint32_t reference_voltage_mv[CONFIG_TEMP_BUFFER_LEN];
+    uint32_t probe_voltage_mv[2][CONFIG_TEMP_BUFFER_LEN];
+};
+
 struct State
 {
-    int16_t probe1_f;
-    int16_t probe2_f;
+    double probe_temps_f[2];
     uint8_t duty_pct;
 };
 

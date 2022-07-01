@@ -15,6 +15,7 @@
 #include <esp_wifi.h>
 #include <soc/adc_channel.h>
 #include <sys/param.h>
+#include <esp_random.h>
 
 #include "driver/adc.h"
 #include "freertos/event_groups.h"
@@ -36,8 +37,10 @@
 
 static const char *TAG = "BBQ";
 
-static struct Settings s_settings;
-static struct State s_state;
+static struct Settings settings;
+// static struct State s_state;
+static struct RawState s_raw_state;
+static uint32_t s_session;
 
 static esp_adc_cal_characteristics_t s_adc1_chars;
 
@@ -66,36 +69,24 @@ static esp_adc_cal_characteristics_t s_adc1_chars;
 #define ADC_EXAMPLE_CALI_SCHEME ESP_ADC_CAL_VAL_EFUSE_TP_FIT
 #endif
 
-#define APPEND_JSON(sb, field, fmt, value) \
-    sb_format(&sb, "\"" field "\": " fmt, value)
+#define APPEND_JSON(sb, field, fmt, ...) \
+    sb_format(&sb, "\"" field "\": " fmt, __VA_ARGS__)
 
 #define APPEND_JSON_FIELD(sb, struct, field, fmt) \
     sb_format(&sb, "\"" #field "\": " fmt, struct->field)
 
 static double STEINHART_COEFFS[] = {7.3431401e-4, 2.1574370e-4, 9.5156860e-8};
 
-// static double fan_duty() {
-//     if (s_fan_manual) {
-//         return s_fan_manual_duty;
-//     }
-
-//     double ret = s_fan_ki * s_error_integral + s_fan_kp * (s_set_point_f - s_probe1_temp_f);
-//     if (ret < 0.1) {
-//         return 0;
-//     }
-//         return ret;
-// }
-
-static uint8_t fan_duty()
+static uint8_t fan_duty_pct(double ambient_temp_f, struct Settings *settings)
 {
-    if (s_settings.is_manual)
+    if (settings->is_manual)
     {
-        return s_settings.manual_duty_pct;
+        return settings->manual_duty_pct;
     }
 
-    if (s_state.probe1_f < s_settings.threshold_f)
+    if (ambient_temp_f < settings->threshold_f)
     {
-        return s_settings.automatic_duty_pct;
+        return settings->automatic_duty_pct;
     }
 
     return 0;
@@ -118,43 +109,83 @@ void start_mdns_service()
     mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
 }
 
-/* Simple HTTP Server Example
+static double probe_temp_f(double probe_mv, double ref_mv)
+{
+    // V = Vref * 2
 
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
+    // V = Vprobe + Vresistor
+    // Vresistor = V - VProbe
+    // Vprobe / Rprobe = Vresistor / Rresistor
+    // Rprobe = Vprobe * Rresistor / Vresistor
+    // Rprobe = Vprobe * PROBE_RESISTOR_OHMS / (Vref*2 - Vprobe)
+    double r_probe_ohm = probe_mv * PROBE_RESISTOR_OHMS / (ref_mv * 2 - probe_mv);
 
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
+    double log_r = log(r_probe_ohm);
+    double temp_k = 1.0 / (STEINHART_COEFFS[0] + STEINHART_COEFFS[1] * log_r + STEINHART_COEFFS[2] * log_r * log_r * log_r);
+    return (temp_k - 273.15) * 9 / 5 + 32;
+}
 
-/* A simple example that demonstrates how to create GET and POST
- * handlers for the web server.
- */
+static struct State derive_state(struct RawState *raw, struct Settings *settings)
+{
+    double avg_ref_voltage_mv = 0;
+    double avg_probe_voltage_mv[2] = {0, 0};
+
+    for (int i = 0; i < CONFIG_TEMP_BUFFER_LEN; i++)
+    {
+        avg_ref_voltage_mv += raw->reference_voltage_mv[i];
+        avg_probe_voltage_mv[0] += raw->probe_voltage_mv[0][i];
+        avg_probe_voltage_mv[1] += raw->probe_voltage_mv[1][i];
+    }
+
+    struct State res = {
+        .probe_temps_f = {
+            probe_temp_f(avg_probe_voltage_mv[0], avg_ref_voltage_mv),
+            probe_temp_f(avg_probe_voltage_mv[1], avg_ref_voltage_mv),
+        }};
+    res.duty_pct = fan_duty_pct(res.probe_temps_f[0], settings);
+
+    return res;
+}
 
 static void state_json(char *buf, size_t buflen, struct State *state)
 {
     struct StringBuffer sb = sb_create(buf, buflen);
 
     sb_format(&sb, "{");
-    APPEND_JSON_FIELD(sb, state, probe1_f, "%d,");
-    APPEND_JSON_FIELD(sb, state, probe2_f, "%d,");
-    APPEND_JSON_FIELD(sb, state, duty_pct, "%d,");
-    APPEND_JSON(sb, "uptime_usec", "%lld", esp_timer_get_time());
+    APPEND_JSON(sb, "probe_temps_f", "[%f, %f], ",
+                state->probe_temps_f[0],
+                state->probe_temps_f[1]);
+    APPEND_JSON(sb, "duty_pct", "%d, ", state->duty_pct);
+    APPEND_JSON(sb, "uptime_usec", "%lld, ", esp_timer_get_time());
+    APPEND_JSON(sb, "session_id", "%lld", s_session);
     sb_format(&sb, "}");
 }
 
-/* An HTTP GET handler */
-static esp_err_t index_get_handler(httpd_req_t *req)
+static void raw_json(char *buf, size_t buflen, struct RawState *raw)
 {
-    /* Send response with custom headers and body set as the
-     * string passed in user context*/
-    char resp[RESPONSE_BUFFER_SIZE];
+    struct StringBuffer sb = sb_create(buf, buflen);
 
-    state_json(resp, sizeof(resp), &s_state);
-
-    httpd_resp_set_hdr(req, "content-type", "application/json");
-    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+    sb_format(&sb, "{");
+    sb_format(&sb, "\"reference_voltage_mv\": [");
+    for (int i = 0; i < CONFIG_TEMP_BUFFER_LEN; i++)
+    {
+        sb_format(&sb, "%d, ", raw->reference_voltage_mv[i]);
+    }
+    sb_format(&sb, "], \"probe_voltage_mv\": [[");
+    for (int i = 0; i < CONFIG_TEMP_BUFFER_LEN; i++)
+    {
+        sb_format(&sb, "%d, ", raw->probe_voltage_mv[0][i]);
+    }
+    sb_format(&sb, "], [");
+    for (int i = 0; i < CONFIG_TEMP_BUFFER_LEN; i++)
+    {
+        sb_format(&sb, "%d, ", raw->probe_voltage_mv[1][i]);
+    }
+    sb_format(&sb, "]}");
+    // APPEND_JSON(sb, "probe_temps_f", "[%f, %f],", state->probe_temps_f[0],
+    // state->probe_temps_f[1]    );
+    // APPEND_JSON(sb, "uptime_usec", "%lld", esp_timer_get_time());
+    // sb_format(&sb, "}");
 }
 
 static void settings_json(char *buf, size_t buflen, struct Settings *settings)
@@ -169,6 +200,22 @@ static void settings_json(char *buf, size_t buflen, struct Settings *settings)
     sb_format(&sb, "}");
 }
 
+/* An HTTP GET handler */
+static esp_err_t index_get_handler(httpd_req_t *req)
+{
+    /* Send response with custom headers and body set as the
+     * string passed in user context*/
+    char resp[RESPONSE_BUFFER_SIZE];
+
+    struct State s = derive_state(&s_raw_state, &settings);
+
+    state_json(resp, sizeof(resp), &s);
+
+    httpd_resp_set_hdr(req, "content-type", "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
 static const httpd_uri_t index_get = {
     .uri = "/",
     .method = HTTP_GET,
@@ -178,10 +225,32 @@ static const httpd_uri_t index_get = {
     .user_ctx = "Hello World!"};
 
 /* An HTTP GET handler */
+static esp_err_t raw_get_handler(httpd_req_t *req)
+{
+    /* Send response with custom headers and body set as the
+     * string passed in user context*/
+    char resp[RESPONSE_BUFFER_SIZE];
+
+    raw_json(resp, sizeof(resp), &s_raw_state);
+
+    httpd_resp_set_hdr(req, "content-type", "application/json");
+    httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static const httpd_uri_t raw_get = {
+    .uri = "/raw",
+    .method = HTTP_GET,
+    .handler = raw_get_handler,
+    /* Let's pass response string in user
+     * context to demonstrate it's usage */
+    .user_ctx = "Hello World!"};
+
+/* An HTTP GET handler */
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     char resp[RESPONSE_BUFFER_SIZE];
-    settings_json(resp, sizeof(resp), &s_settings);
+    settings_json(resp, sizeof(resp), &settings);
     httpd_resp_set_hdr(req, "content-type", "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -209,26 +278,26 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
             char param[32];
             if (httpd_query_key_value(buf, "is_manual", param, sizeof(param)) == ESP_OK)
             {
-                s_settings.is_manual = atoi(param);
+                settings.is_manual = atoi(param);
             }
             if (httpd_query_key_value(buf, "manual_duty_pct", param, sizeof(param)) == ESP_OK)
             {
-                s_settings.manual_duty_pct = atoi(param);
+                settings.manual_duty_pct = atoi(param);
             }
             if (httpd_query_key_value(buf, "threshold_f", param, sizeof(param)) == ESP_OK)
             {
-                s_settings.threshold_f = atoi(param);
+                settings.threshold_f = atoi(param);
             }
             if (httpd_query_key_value(buf, "automatic_duty", param, sizeof(param)) == ESP_OK)
             {
-                s_settings.automatic_duty_pct = atoi(param);
+                settings.automatic_duty_pct = atoi(param);
             }
         }
         free(buf);
     }
 
     char resp[RESPONSE_BUFFER_SIZE];
-    settings_json(resp, sizeof(resp), &s_settings);
+    settings_json(resp, sizeof(resp), &settings);
     httpd_resp_set_hdr(req, "content-type", "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -275,7 +344,7 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
-    // config.stack_size = 1<<13; // 8k
+    config.stack_size = 1<<13; // 8k
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -284,6 +353,7 @@ static httpd_handle_t start_webserver(void)
         // Set URI handlers
         ESP_LOGI(TAG, "Registering URI handlers");
         httpd_register_uri_handler(server, &index_get);
+        httpd_register_uri_handler(server, &raw_get);
         httpd_register_uri_handler(server, &settings_get);
         httpd_register_uri_handler(server, &settings_post);
         return server;
@@ -322,25 +392,9 @@ static void connect_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-static double probe_temp_f(double probe_mv, double ref_mv)
-{
-    // V = Vref * 2
-
-    // V = Vprobe + Vresistor
-    // Vresistor = V - VProbe
-    // Vprobe / Rprobe = Vresistor / Rresistor
-    // Rprobe = Vprobe * Rresistor / Vresistor
-    // Rprobe = Vprobe * PROBE_RESISTOR_OHMS / (Vref*2 - Vprobe)
-    double r_probe_ohm = probe_mv * PROBE_RESISTOR_OHMS / (ref_mv * 2 - probe_mv);
-
-    double log_r = log(r_probe_ohm);
-    double temp_k = 1.0 / (STEINHART_COEFFS[0] + STEINHART_COEFFS[1] * log_r + STEINHART_COEFFS[2] * log_r * log_r * log_r);
-    return (temp_k - 273.15) * 9 / 5 + 32;
-}
-
 static void init(void)
 {
-    s_settings = settings_create();
+    settings = settings_create();
 
     // Network.
 
@@ -376,10 +430,11 @@ static void init(void)
     ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_VREF_CHAN, ADC_EXAMPLE_ATTEN));
 }
 
-void post_state() {
+void post_state(struct State *state)
+{
 
     esp_http_client_config_t config = {
-        .url = "https://bbqbe.hjfreyer.repl.co/device",
+        .url = CONFIG_DATA_ENDPOINT,
         .method = HTTP_METHOD_POST,
     };
 
@@ -387,7 +442,7 @@ void post_state() {
      * string passed in user context*/
     char resp[RESPONSE_BUFFER_SIZE];
 
-    state_json(resp, sizeof(resp), &s_state);
+    state_json(resp, sizeof(resp), state);
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_post_field(client, resp, strlen(resp));
@@ -407,6 +462,28 @@ void post_state() {
     esp_http_client_cleanup(client);
 }
 
+struct Readings do_readings()
+{
+    int probe1_raw = adc1_get_raw(ADC1_PROBE1_CHAN);
+    int probe2_raw = adc1_get_raw(ADC1_PROBE2_CHAN);
+    int vref_raw = adc1_get_raw(ADC1_VREF_CHAN);
+
+    struct Readings res = {
+        .reference_voltage_mv = esp_adc_cal_raw_to_voltage(vref_raw, &s_adc1_chars),
+        .probe_voltage_mv = {
+            esp_adc_cal_raw_to_voltage(probe1_raw, &s_adc1_chars),
+            esp_adc_cal_raw_to_voltage(probe2_raw, &s_adc1_chars)}};
+
+    return res;
+}
+
+static void update_state(uint64_t tick, struct RawState *state, struct Readings readings)
+{
+    state->reference_voltage_mv[tick % CONFIG_TEMP_BUFFER_LEN] = readings.reference_voltage_mv;
+    state->probe_voltage_mv[0][tick % CONFIG_TEMP_BUFFER_LEN] = readings.probe_voltage_mv[0];
+    state->probe_voltage_mv[1][tick % CONFIG_TEMP_BUFFER_LEN] = readings.probe_voltage_mv[1];
+}
+
 void app_main(void)
 {
     init();
@@ -414,39 +491,22 @@ void app_main(void)
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
 
-    int tick = 0;
+    s_session = esp_random();
+    uint64_t tick = 0;
     while (1)
     {
-        if (tick % CONFIG_DUTY_PERIOD == 0)
-        {
-            s_state.duty_pct = fan_duty();
-            ESP_LOGI(TAG, "setting duty = %d%%", s_state.duty_pct);
-            // ESP_LOGI(TAG, "v_p1: %d, v_p2: %d, v_ref: %d", probe1_voltage, probe2_voltage, ref_voltage);
-            ESP_LOGI(TAG, "temp1_f: %d, temp2_f: %d", s_state.probe1_f, s_state.probe2_f);
-        }
+        update_state(tick, &s_raw_state, do_readings());
 
-        if (tick % CONFIG_REPORT_PERIOD == 0) {
-            post_state();
+        struct State state = derive_state(&s_raw_state, &settings);
+
+        if (tick != 0 && tick % CONFIG_REPORT_PERIOD == 0)
+        {
+            post_state(&state);
         }
 
         /* Set the GPIO level according to the state (LOW or HIGH)*/
-        bool set_fan = tick % CONFIG_DUTY_PERIOD < s_state.duty_pct * CONFIG_DUTY_PERIOD / 100;
+        bool set_fan = tick % CONFIG_DUTY_PERIOD < state.duty_pct * CONFIG_DUTY_PERIOD / 100;
         gpio_set_level(FAN_CONTROL_GPIO, set_fan);
-
-        int probe1_raw = adc1_get_raw(ADC1_PROBE1_CHAN);
-        int probe2_raw = adc1_get_raw(ADC1_PROBE2_CHAN);
-        int vref_raw = adc1_get_raw(ADC1_VREF_CHAN);
-
-        uint32_t probe1_voltage = esp_adc_cal_raw_to_voltage(probe1_raw, &s_adc1_chars);
-        uint32_t probe2_voltage = esp_adc_cal_raw_to_voltage(probe2_raw, &s_adc1_chars);
-        uint32_t ref_voltage = esp_adc_cal_raw_to_voltage(vref_raw, &s_adc1_chars);
-
-        double probe1_f = probe_temp_f(probe1_voltage, ref_voltage);
-        double probe2_f = probe_temp_f(probe2_voltage, ref_voltage);
-
-        // Exponential moving average.
-        s_state.probe1_f = (s_state.probe1_f + probe1_f) / 2;
-        s_state.probe2_f = (s_state.probe2_f + probe2_f) / 2;
 
         vTaskDelay(pdMS_TO_TICKS(CONFIG_TICK_PERIOD));
         tick += 1;
