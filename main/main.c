@@ -40,9 +40,9 @@
 
 static const char *TAG = "BBQ";
 
-static struct Settings settings;
-// static struct State s_state;
-static struct RawState s_raw_state;
+static Settings settings;
+// static  State s_state;
+static RawState s_raw_state;
 static uint32_t s_session;
 
 static esp_adc_cal_characteristics_t s_adc1_chars;
@@ -75,13 +75,11 @@ extern const uint8_t ec_pv_key_end[] asm("_binary_private_key_pem_end");
 #define ADC_EXAMPLE_CALI_SCHEME ESP_ADC_CAL_VAL_EFUSE_TP_FIT
 #endif
 
-
 #define DEVICE_PATH "projects/%s/locations/%s/registries/%s/devices/%s"
 #define SUBSCRIBE_TOPIC_COMMAND "/devices/%s/commands/#"
 #define SUBSCRIBE_TOPIC_CONFIG "/devices/%s/config"
 #define PUBLISH_TOPIC_EVENT "/devices/%s/events"
 #define PUBLISH_TOPIC_STATE "/devices/%s/state"
-
 
 char *subscribe_topic_command, *subscribe_topic_config;
 
@@ -89,7 +87,6 @@ iotc_mqtt_qos_t iotc_example_qos = IOTC_MQTT_QOS_AT_LEAST_ONCE;
 static iotc_timed_task_handle_t delayed_publish_task =
     IOTC_INVALID_TIMED_TASK_HANDLE;
 iotc_context_handle_t iotc_context = IOTC_INVALID_CONTEXT_HANDLE;
-
 
 #define APPEND_JSON(sb, field, fmt, ...) \
     sb_format(&sb, "\"" field "\": " fmt, __VA_ARGS__)
@@ -114,22 +111,7 @@ static uint8_t fan_duty_pct(double ambient_temp_f, struct Settings *settings)
     return 0;
 }
 
-
-static void state_json(char *buf, size_t buflen, struct State *state)
-{
-    struct StringBuffer sb = sb_create(buf, buflen);
-
-    sb_format(&sb, "{");
-    APPEND_JSON(sb, "probe_temps_f", "[%f, %f], ",
-                state->probe_temps_f[0],
-                state->probe_temps_f[1]);
-    APPEND_JSON(sb, "duty_pct", "%d, ", state->duty_pct);
-    APPEND_JSON(sb, "uptime_usec", "%lld, ", esp_timer_get_time());
-    APPEND_JSON(sb, "session_id", "%lld", s_session);
-    sb_format(&sb, "}");
-}
-
-void publish_telemetry_event(iotc_context_handle_t context_handle,struct State state)
+void publish_telemetry_event(iotc_context_handle_t context_handle, State state)
 {
     // IOTC_UNUSED(timed_task);
     // IOTC_UNUSED(user_data);
@@ -137,12 +119,11 @@ void publish_telemetry_event(iotc_context_handle_t context_handle,struct State s
     char *publish_topic = NULL;
     asprintf(&publish_topic, PUBLISH_TOPIC_EVENT, CONFIG_GIOT_DEVICE_ID);
 
-
     /* Send response with custom headers and body set as the
      * string passed in user context*/
-    char publish_message[RESPONSE_BUFFER_SIZE];
+    char *publish_message = NULL;
 
-    state_json(publish_message, sizeof(publish_message), &state);
+    state_json(s_session, &state, &publish_message);
 
     // char *publish_message = NULL;
     // asprintf(&publish_message, "message");
@@ -152,7 +133,7 @@ void publish_telemetry_event(iotc_context_handle_t context_handle,struct State s
                  iotc_example_qos,
                  /*callback=*/NULL, /*user_data=*/NULL);
     free(publish_topic);
-    // free(publish_message);
+    free(publish_message);
 }
 
 void iotc_mqttlogic_subscribe_callback(
@@ -164,17 +145,20 @@ void iotc_mqttlogic_subscribe_callback(
     // IOTC_UNUSED(call_type);
     // IOTC_UNUSED(state);
     // IOTC_UNUSED(user_data);
-    if (params != NULL && params->message.topic != NULL) {
+    if (params != NULL && params->message.topic != NULL)
+    {
         ESP_LOGI(TAG, "Subscription Topic: %s", params->message.topic);
         char *sub_message = (char *)malloc(params->message.temporary_payload_data_length + 1);
-        if (sub_message == NULL) {
+        if (sub_message == NULL)
+        {
             ESP_LOGE(TAG, "Failed to allocate memory");
             return;
         }
         memcpy(sub_message, params->message.temporary_payload_data, params->message.temporary_payload_data_length);
         sub_message[params->message.temporary_payload_data_length] = '\0';
         ESP_LOGI(TAG, "Message Payload: %s ", sub_message);
-        if (strcmp(subscribe_topic_command, params->message.topic) == 0) {
+        if (strcmp(subscribe_topic_command, params->message.topic) == 0)
+        {
             int value;
             sscanf(sub_message, "{\"outlet\": %d}", &value);
             ESP_LOGI(TAG, "value: %d", value);
@@ -193,7 +177,8 @@ void on_connection_state_changed(iotc_context_handle_t in_context_handle,
 {
     iotc_connection_data_t *conn_data = (iotc_connection_data_t *)data;
 
-    switch (conn_data->connection_state) {
+    switch (conn_data->connection_state)
+    {
     /* IOTC_CONNECTION_STATE_OPENED means that the connection has been
        established and the IoTC Client is ready to send/recv messages */
     case IOTC_CONNECTION_STATE_OPENED:
@@ -247,17 +232,21 @@ void on_connection_state_changed(iotc_context_handle_t in_context_handle,
            registered activities. Using cancel function on handler will remove the
            handler from the timed queue which prevents the registered handle to be
            called when there is no connection. */
-        if (IOTC_INVALID_TIMED_TASK_HANDLE != delayed_publish_task) {
+        if (IOTC_INVALID_TIMED_TASK_HANDLE != delayed_publish_task)
+        {
             iotc_cancel_timed_task(delayed_publish_task);
             delayed_publish_task = IOTC_INVALID_TIMED_TASK_HANDLE;
         }
 
-        if (state == IOTC_STATE_OK) {
+        if (state == IOTC_STATE_OK)
+        {
             /* The connection has been closed intentionally. Therefore, stop
                the event processing loop as there's nothing left to do
                in this example. */
             iotc_events_stop();
-        } else {
+        }
+        else
+        {
             ESP_LOGE(TAG, "connection closed - reason %d!", state);
             /* The disconnection was unforeseen.  Try reconnect to the server
             with previously set configuration, which has been provided
@@ -274,7 +263,6 @@ void on_connection_state_changed(iotc_context_handle_t in_context_handle,
         break;
     }
 }
-
 
 void start_mdns_service()
 {
@@ -304,12 +292,19 @@ static double probe_temp_f(double probe_mv, double ref_mv)
     // Rprobe = Vprobe * PROBE_RESISTOR_OHMS / (Vref*2 - Vprobe)
     double r_probe_ohm = probe_mv * PROBE_RESISTOR_OHMS / (ref_mv * 2 - probe_mv);
 
+    // Fix up some wacky edge cases that can cause NaNs and Infs.
+    if (r_probe_ohm < 1) {
+        r_probe_ohm = 10000000;
+    }
+    r_probe_ohm = MIN(r_probe_ohm, 10000000);
+    r_probe_ohm = MAX(r_probe_ohm, 10);
+    
     double log_r = log(r_probe_ohm);
     double temp_k = 1.0 / (STEINHART_COEFFS[0] + STEINHART_COEFFS[1] * log_r + STEINHART_COEFFS[2] * log_r * log_r * log_r);
     return (temp_k - 273.15) * 9 / 5 + 32;
 }
 
-static struct State derive_state(struct RawState *raw, struct Settings *settings)
+static State derive_state(RawState *raw, Settings *settings)
 {
     double avg_ref_voltage_mv = 0;
     double avg_probe_voltage_mv[2] = {0, 0};
@@ -321,7 +316,15 @@ static struct State derive_state(struct RawState *raw, struct Settings *settings
         avg_probe_voltage_mv[1] += raw->probe_voltage_mv[1][i];
     }
 
-    struct State res = {
+    avg_ref_voltage_mv /= CONFIG_TEMP_BUFFER_LEN;
+    avg_probe_voltage_mv[0] /= CONFIG_TEMP_BUFFER_LEN;
+    avg_probe_voltage_mv[1] /= CONFIG_TEMP_BUFFER_LEN;
+
+    // ESP_LOGI(TAG, "avg_ref_mv: %f", avg_ref_voltage_mv);
+    // ESP_LOGI(TAG, "p0_mv: %f", avg_probe_voltage_mv[0]);
+    // ESP_LOGI(TAG, "p1_mv: %f", avg_probe_voltage_mv[1]);
+
+    State res = {
         .probe_temps_f = {
             probe_temp_f(avg_probe_voltage_mv[0], avg_ref_voltage_mv),
             probe_temp_f(avg_probe_voltage_mv[1], avg_ref_voltage_mv),
@@ -331,10 +334,9 @@ static struct State derive_state(struct RawState *raw, struct Settings *settings
     return res;
 }
 
-
-static void raw_json(char *buf, size_t buflen, struct RawState *raw)
+static void raw_json(char *buf, size_t buflen, RawState *raw)
 {
-    struct StringBuffer sb = sb_create(buf, buflen);
+    StringBuffer sb = sb_create(buf, buflen);
 
     sb_format(&sb, "{");
     sb_format(&sb, "\"reference_voltage_mv\": [");
@@ -355,13 +357,14 @@ static void raw_json(char *buf, size_t buflen, struct RawState *raw)
     sb_format(&sb, "]}");
     // APPEND_JSON(sb, "probe_temps_f", "[%f, %f],", state->probe_temps_f[0],
     // state->probe_temps_f[1]    );
-    // APPEND_JSON(sb, "uptime_usec", "%lld", esp_timer_get_time());
+    // APPEND_JSON(sb, "uptime_usec", "%lld", );
     // sb_format(&sb, "}");
+    
 }
 
-static void settings_json(char *buf, size_t buflen, struct Settings *settings)
+static void settings_json(char *buf, size_t buflen, Settings *settings)
 {
-    struct StringBuffer sb = sb_create(buf, buflen);
+    StringBuffer sb = sb_create(buf, buflen);
 
     sb_format(&sb, "{");
     APPEND_JSON_FIELD(sb, settings, is_manual, "%d,");
@@ -376,14 +379,16 @@ static esp_err_t index_get_handler(httpd_req_t *req)
 {
     /* Send response with custom headers and body set as the
      * string passed in user context*/
-    char resp[RESPONSE_BUFFER_SIZE];
+    char* resp =  NULL;
 
-    struct State s = derive_state(&s_raw_state, &settings);
+    State s = derive_state(&s_raw_state, &settings);
 
-    state_json(resp, sizeof(resp), &s);
+    state_json(s_session, &s, &resp);
 
     httpd_resp_set_hdr(req, "content-type", "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+
+    free(resp);
     return ESP_OK;
 }
 
@@ -515,7 +520,7 @@ static httpd_handle_t start_webserver(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
-    config.stack_size = 1<<13; // 8k
+    config.stack_size = 1 << 13; // 8k
 
     // Start the httpd server
     ESP_LOGI(TAG, "Starting server on port: '%d'", config.server_port);
@@ -563,7 +568,6 @@ static void connect_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-
 static void mqtt_task(void *pvParameters)
 {
     /* Format the key type descriptors so the client understands
@@ -572,13 +576,14 @@ static void mqtt_task(void *pvParameters)
     iotc_crypto_key_data_t iotc_connect_private_key_data;
     iotc_connect_private_key_data.crypto_key_signature_algorithm = IOTC_CRYPTO_KEY_SIGNATURE_ALGORITHM_ES256;
     iotc_connect_private_key_data.crypto_key_union_type = IOTC_CRYPTO_KEY_UNION_TYPE_PEM;
-    iotc_connect_private_key_data.crypto_key_union.key_pem.key = (char *) ec_pv_key_start;
+    iotc_connect_private_key_data.crypto_key_union.key_pem.key = (char *)ec_pv_key_start;
 
     /* initialize iotc library and create a context to use to connect to the
-    * GCP IoT Core Service. */
+     * GCP IoT Core Service. */
     const iotc_state_t error_init = iotc_initialize();
 
-    if (IOTC_STATE_OK != error_init) {
+    if (IOTC_STATE_OK != error_init)
+    {
         ESP_LOGE(TAG, " iotc failed to initialize, error: %d", error_init);
         vTaskDelete(NULL);
     }
@@ -587,7 +592,8 @@ static void mqtt_task(void *pvParameters)
         on a single socket, and can be used to publish and subscribe
         to numerous topics. */
     iotc_context = iotc_create_context();
-    if (IOTC_INVALID_CONTEXT_HANDLE >= iotc_context) {
+    if (IOTC_INVALID_CONTEXT_HANDLE >= iotc_context)
+    {
         ESP_LOGE(TAG, " iotc failed to create context, error: %d", -iotc_context);
         vTaskDelete(NULL);
     }
@@ -605,11 +611,12 @@ static void mqtt_task(void *pvParameters)
     char jwt[IOTC_JWT_SIZE] = {0};
     size_t bytes_written = 0;
     iotc_state_t state = iotc_create_iotcore_jwt(
-                             CONFIG_GIOT_PROJECT_ID,
-                             /*jwt_expiration_period_sec=*/3600, &iotc_connect_private_key_data, jwt,
-                             IOTC_JWT_SIZE, &bytes_written);
+        CONFIG_GIOT_PROJECT_ID,
+        /*jwt_expiration_period_sec=*/3600, &iotc_connect_private_key_data, jwt,
+        IOTC_JWT_SIZE, &bytes_written);
 
-    if (IOTC_STATE_OK != state) {
+    if (IOTC_STATE_OK != state)
+    {
         ESP_LOGE(TAG, "iotc_create_iotcore_jwt returned with error: %ul", state);
         vTaskDelete(NULL);
     }
@@ -635,7 +642,6 @@ static void mqtt_task(void *pvParameters)
 
     vTaskDelete(NULL);
 }
-
 
 static void init(void)
 {
@@ -675,7 +681,7 @@ static void init(void)
     ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_VREF_CHAN, ADC_EXAMPLE_ATTEN));
 }
 
-void post_state(struct State *state)
+void post_state(State *state)
 {
 
     // esp_http_client_config_t config = {
@@ -685,9 +691,9 @@ void post_state(struct State *state)
 
     /* Send response with custom headers and body set as the
      * string passed in user context*/
-    char resp[RESPONSE_BUFFER_SIZE];
+    char *resp = NULL;
 
-    state_json(resp, sizeof(resp), state);
+    state_json(s_session, state, &resp);
 
     // esp_http_client_handle_t client = esp_http_client_init(&config);
     // esp_http_client_set_post_field(client, resp, strlen(resp));
@@ -707,13 +713,13 @@ void post_state(struct State *state)
     // esp_http_client_cleanup(client);
 }
 
-struct Readings do_readings()
+Readings do_readings()
 {
     int probe1_raw = adc1_get_raw(ADC1_PROBE1_CHAN);
     int probe2_raw = adc1_get_raw(ADC1_PROBE2_CHAN);
     int vref_raw = adc1_get_raw(ADC1_VREF_CHAN);
 
-    struct Readings res = {
+    Readings res = {
         .reference_voltage_mv = esp_adc_cal_raw_to_voltage(vref_raw, &s_adc1_chars),
         .probe_voltage_mv = {
             esp_adc_cal_raw_to_voltage(probe1_raw, &s_adc1_chars),
@@ -722,7 +728,7 @@ struct Readings do_readings()
     return res;
 }
 
-static void update_state(uint64_t tick, struct RawState *state, struct Readings readings)
+static void update_state(uint64_t tick, RawState *state, Readings readings)
 {
     state->reference_voltage_mv[tick % CONFIG_TEMP_BUFFER_LEN] = readings.reference_voltage_mv;
     state->probe_voltage_mv[0][tick % CONFIG_TEMP_BUFFER_LEN] = readings.probe_voltage_mv[0];
@@ -743,7 +749,8 @@ static void obtain_time(void)
     // wait for time to be set
     time_t now = 0;
     struct tm timeinfo = {0};
-    while (timeinfo.tm_year < (2016 - 1900)) {
+    while (timeinfo.tm_year < (2016 - 1900))
+    {
         ESP_LOGI(TAG, "Waiting for system time to be set...");
         vTaskDelay(2000 / portTICK_PERIOD_MS);
         time(&now);
@@ -768,12 +775,12 @@ void app_main(void)
     {
         update_state(tick, &s_raw_state, do_readings());
 
-        struct State state = derive_state(&s_raw_state, &settings);
+        State state = derive_state(&s_raw_state, &settings);
 
         if (tick != 0 && tick % CONFIG_REPORT_PERIOD == 0)
         {
             publish_telemetry_event(iotc_context, state);
-//            post_state(&state);
+            //            post_state(&state);
         }
 
         /* Set the GPIO level according to the state (LOW or HIGH)*/

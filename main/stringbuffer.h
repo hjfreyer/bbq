@@ -4,16 +4,16 @@
 #include <stddef.h>
 #include <stdarg.h>
 
-struct StringBuffer
+typedef struct StringBuffer
 {
     char *buffer;
     size_t buflen;
     size_t written;
-};
+} StringBuffer;
 
-struct StringBuffer sb_create(char *buffer, size_t buflen)
+StringBuffer sb_create(char *buffer, size_t buflen)
 {
-    struct StringBuffer res =
+    StringBuffer res =
         {
             .buffer = buffer,
             .buflen = buflen,
@@ -21,7 +21,7 @@ struct StringBuffer sb_create(char *buffer, size_t buflen)
     return res;
 }
 
-static bool sb_format(struct StringBuffer *buffer, const char *fmt, ...)
+static bool sb_format(StringBuffer *buffer, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
