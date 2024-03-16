@@ -1,9 +1,0 @@
-{
-    "files.associations": {
-        "esp_flash.h": "c",
-        "spi_flash_types.h": "c",
-        "freertos.h": "c",
-        "cmath": "cpp",
-        "complex": "cpp"
-    },
-}

@@ -1,4 +1,3 @@
-
 #ifndef BBQCTL_BBQCTL_H
 #define BBQCTL_BBQCTL_H
 
@@ -24,9 +23,9 @@ struct Settings {
 };
 
 struct Output {
-    double ambient_temp_f;
-    double food_temp_f;
-    uint8_t duty_pct;
+  double ambient_temp_f;
+  double food_temp_f;
+  uint8_t duty_pct;
 };
 
 // class Device {
@@ -49,7 +48,7 @@ struct State2 {
   double probe_temps_f[2];
   uint8_t duty_pct;
 };
-}
+}  // namespace internal
 
 typedef uint32_t voltage_t;
 
@@ -59,15 +58,14 @@ class Controller {
 
   void ProvideReadings(voltage_t ref, voltage_t ambient, voltage_t food);
 
-    Output GetOutput();
+  Output GetOutput();
 
  private:
   Config config_;
-Settings settings_;
+  Settings settings_;
 
   internal::State1 raw_;
   internal::State2 higher_;
-
 };
 
 }  // namespace bbqctl

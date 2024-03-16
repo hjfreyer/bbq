@@ -1,0 +1,46 @@
+menu "BBQ Configuration"
+
+    config EXAMPLE_FIRMWARE_UPGRADE_URL
+        string "firmware upgrade url endpoint"
+        default "https://192.168.0.3:8070/hello_world.bin"
+        help
+            URL of server which hosts the firmware
+            image.
+
+    config EXAMPLE_USE_CERT_BUNDLE
+        bool "Enable certificate bundle"
+        default y
+        depends on MBEDTLS_CERTIFICATE_BUNDLE
+        help
+            Enable trusted root certificate bundle. This approach allows to have
+            OTA updates functional with any public server without requirement
+            to explicitly add its server certificate.
+
+    config EXAMPLE_SKIP_COMMON_NAME_CHECK
+        bool "Skip server certificate CN fieldcheck"
+        default n
+        help
+            This allows you to skip the validation of OTA server certificate CN field.
+
+
+    config BROKER_URI
+        string "Broker URL"
+        default "mqtts://25892ce13ca54f009b10ee48603654a5.s2.eu.hivemq.cloud:8883"
+        help
+            URL of an mqtt broker which this example connects to.
+
+    config BROKER_BIN_SIZE_TO_SEND
+        # This option is not visible and is used only to set parameters for example tests
+        # Here we configure the data size to send and to be expected in the python script
+        int
+        default 20000
+
+    config BROKER_USERNAME
+        string "Broker Username"
+        default ""
+
+    config BROKER_PASSWORD
+        string "Broker Password"
+        default ""
+    
+endmenu

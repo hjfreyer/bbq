@@ -89,7 +89,7 @@ void Controller::ProvideReadings(voltage_t ref, voltage_t ambient,
 }
 
 Output Controller::GetOutput() {
-  internal::State2 state2;ß
+  internal::State2 state2;
   update_state2(config_, &state2, &raw_, &settings_);
 
   return Output{
