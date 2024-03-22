@@ -43,4 +43,29 @@ menu "BBQ Configuration"
         string "Broker Password"
         default ""
     
+    config FAN_CONTROL_GPIO
+        int "GPIO to control the fan"
+        range 0 48
+        default 32
+
+    config TICKS_PER_TOCK
+        int "How many FreeRTOS ticks per 'tock'"
+        range 1 100000
+        default 10
+
+    config MEASUREMENT_PERIOD
+        int "Period for samping from the sensors in tocks"
+        range 1 100000
+        default 1
+
+    config REPORTING_PERIOD
+        int "Period for sending data to mqtt in tocks"
+        range 1 100000
+        default 20
+
+    config DUTY_PERIOD
+        int "Duty cycle length in tocks"
+        range 10 100000
+        default 200
+        
 endmenu

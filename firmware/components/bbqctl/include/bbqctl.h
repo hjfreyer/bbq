@@ -58,6 +58,8 @@ class Controller {
 
   void ProvideReadings(voltage_t ref, voltage_t ambient, voltage_t food);
 
+  Settings& GetSettings() { return this->settings_;}
+
   Output GetOutput();
 
  private:
