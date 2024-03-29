@@ -172,6 +172,17 @@ std::string topic_name(const std::string &suffix) {
   return out.str();
 }
 
+std::string serialize_output(const bbqctl::Output &output) {
+  std::stringstream out;
+  out << "{";
+  out << R"("food_temp_f": )" << output.food_temp_f << ", ";
+  out << R"("ambient_temp_f": )" << output.ambient_temp_f << ", ";
+  uint32_t duty_pct = output.duty_pct;
+  out << R"("duty_pct": )" << duty_pct;
+  out << "}";
+  return out.str();
+}
+
 void bbq_task(void *pvParameter) {
   esp_mqtt_client_handle_t client = (esp_mqtt_client_handle_t)pvParameter;
 
@@ -191,20 +202,10 @@ void bbq_task(void *pvParameter) {
       ESP_LOGI(TAG, "ambient: %f, food: %f, duty_pct: %d",
                output.ambient_temp_f, output.food_temp_f, output.duty_pct);
       ESP_LOGI(TAG, "Publishing");
-      std::string food_topic = topic_name("food_temp_f");
-      std::string food = std::to_string(output.food_temp_f);
-      esp_mqtt_client_publish(client, food_topic.c_str(), food.c_str(),
-                              food.length(), 0, 0);
-
-      std::string ambient_topic = topic_name("ambient_temp_f");
-      std::string ambient = std::to_string(output.ambient_temp_f);
-      esp_mqtt_client_publish(client, ambient_topic.c_str(), ambient.c_str(),
-                              ambient.length(), 0, 0);
-
-      std::string duty_topic = topic_name("duty_pct");
-      std::string duty = std::to_string(output.duty_pct);
-      esp_mqtt_client_publish(client, duty_topic.c_str(), duty.c_str(),
-                              duty.length(), 0, 0);
+      std::string reading_topic = topic_name("reading");
+      std::string serialized = serialize_output(output);
+      esp_mqtt_client_publish(client, reading_topic.c_str(), serialized.c_str(),
+                              serialized.length(), 0, 0);
     }
 
     /* Set the GPIO level according to the state (LOW or HIGH)*/
