@@ -6,7 +6,7 @@ import { collection, doc, query, limit, orderBy, Firestore, getDoc, onSnapshot, 
 import uPlot, { AlignedData, Axis, Options } from 'uplot';
 import '@/node_modules/uplot/dist/uPlot.min.css';
 import * as _ from "lodash";
-import { useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 
 import { db } from '@/lib/firebase';
@@ -31,7 +31,7 @@ type Dimensions = {
 }
 
 const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_diffs: number[], dimensions: Dimensions }) => {
-    const svgRef = useRef(null);
+    const svgRef = useRef<HTMLDivElement>(null);
 
     let opts: Options = {
         title: "LET THERE BE FOOD",
@@ -131,12 +131,12 @@ const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_dif
 
         let prev_scale = c.scales['x'];
         if (prev_scale.min == null && data2[0].length > 0) {
-            let min = Math.min(...data2[0]);
-            let max = Math.max(...data2[0]);
+            let min = Math.min(...times);
+            let max = Math.max(...times);
             c.setScale('x', { min, max });
         }
         if (prev_scale.min != null) {
-            let max = Math.max(...data2[0]);
+            let max = Math.max(...times);
             c.setScale('x', { min: prev_scale.min!, max });
         }
 
@@ -265,17 +265,18 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
 
 export type SessionViewProps = { id: string, session: Session };
 
-export function SessionView({ id, session }: SessionViewProps) {
+function SessionView({ id, session }: SessionViewProps) {
+    const [formTarget, setFormTarget] = useState(session.food_target);
+
     if (session === null) {
         return <div>Loading? Not Found?</div>;
     }
-    const [formTarget, setFormTarget] = useState(session.food_target);
 
     let temps = session.samples;
     let diffs = [];
     for (let i = 0; i < temps.length; i++) {
         const sample = temps[i];
-        let begin = _.sortedIndexBy(temps, { time: { seconds: sample.time.seconds - 10 * 60 } }, 'time.seconds');
+        let begin = _.sortedIndexBy(temps, { time: { seconds: sample.time.seconds - 10 * 60 } } as Sample, 'time.seconds');
 
         diffs.push((sample.probe_temps_f[1] - temps[begin].probe_temps_f[1]) / 10);
     }
@@ -293,7 +294,7 @@ export function SessionView({ id, session }: SessionViewProps) {
         doneat = "" + new Date(new Date().getTime() + delta * 1000);
     }
 
-    const setTarget = (e) => {
+    const setTarget = (e: FormEvent) => {
         e.preventDefault();
         updateDoc(doc(db, "sessions-1", id), {
             food_target: formTarget
