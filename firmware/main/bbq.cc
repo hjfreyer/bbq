@@ -19,7 +19,6 @@
 #include <freertos/task.h>
 #include <mcp3002.h>
 #include <mdns.h>
-#include <mqtt_client.h>
 #include <protocol_examples_common.h>
 #include <string.h>
 
@@ -97,84 +96,10 @@ void handle_command(char *data, size_t data_len) {
   ESP_LOGI(TAG, "unknown command: %s", data);
 }
 
-/*
- * @brief Event handler registered to receive MQTT events
- *
- *  This function is called by the MQTT client event loop.
- *
- * @param handler_args user data registered to the event.
- * @param base Event base for the handler(always MQTT Base in this example).
- * @param event_id The id for the received event.
- * @param event_data The data for the event, esp_mqtt_event_handle_t.
- */
-static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
-                               int32_t event_id,
-                               esp_mqtt_event_handle_t event_data) {
-  ESP_LOGD(TAG, "Event dispatched from event loop base=%s, event_id=%ld", base,
-           event_id);
-  esp_mqtt_event_handle_t event = event_data;
-  esp_mqtt_client_handle_t client = event->client;
-  int msg_id;
-  switch ((esp_mqtt_event_id_t)event_id) {
-    case MQTT_EVENT_CONNECTED:
-      ESP_LOGI(TAG, "MQTT_EVENT_CONNECTED");
-      msg_id = esp_mqtt_client_subscribe(client, "/bbq/command", 0);
-      ESP_LOGI(TAG, "sent subscribe successful, msg_id=%d", msg_id);
-      break;
-    case MQTT_EVENT_DISCONNECTED:
-      ESP_LOGI(TAG, "MQTT_EVENT_DISCONNECTED");
-      break;
-    case MQTT_EVENT_SUBSCRIBED:
-      ESP_LOGI(TAG, "MQTT_EVENT_SUBSCRIBED, msg_id=%d", event->msg_id);
-      break;
-    case MQTT_EVENT_UNSUBSCRIBED:
-      ESP_LOGI(TAG, "MQTT_EVENT_UNSUBSCRIBED, msg_id=%d", event->msg_id);
-      break;
-    case MQTT_EVENT_PUBLISHED:
-      ESP_LOGI(TAG, "MQTT_EVENT_PUBLISHED, msg_id=%d", event->msg_id);
-      break;
-    case MQTT_EVENT_DATA:
-      ESP_LOGI(TAG, "MQTT_EVENT_DATA");
-      printf("TOPIC=%.*s\r\n", event->topic_len, event->topic);
-      printf("DATA=%.*s\r\n", event->data_len, event->data);
-      if (strncmp(event->topic, "/bbq/command", event->topic_len) == 0) {
-        handle_command(event->data, event->data_len);
-      }
-      break;
-    case MQTT_EVENT_ERROR:
-      ESP_LOGI(TAG, "MQTT_EVENT_ERROR");
-      if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
-        ESP_LOGI(TAG, "Last error code reported from esp-tls: 0x%x",
-                 event->error_handle->esp_tls_last_esp_err);
-        ESP_LOGI(TAG, "Last tls stack error number: 0x%x",
-                 event->error_handle->esp_tls_stack_err);
-        ESP_LOGI(TAG, "Last captured errno : %d (%s)",
-                 event->error_handle->esp_transport_sock_errno,
-                 strerror(event->error_handle->esp_transport_sock_errno));
-      } else if (event->error_handle->error_type ==
-                 MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
-        ESP_LOGI(TAG, "Connection refused error: 0x%x",
-                 event->error_handle->connect_return_code);
-      } else {
-        ESP_LOGW(TAG, "Unknown error type: 0x%x",
-                 event->error_handle->error_type);
-      }
-      break;
-    default:
-      ESP_LOGI(TAG, "Other event id:%d", event->event_id);
-      break;
-  }
-}
-
-std::string topic_name(const std::string &suffix) {
-  std::stringstream out;
-  out << "/bbq/" << SESSION_ID << "/" << suffix;
-  return out.str();
-}
-
 std::string serialize_output(const bbqctl::Output &output) {
   std::stringstream out;
   out << "{";
+  out << R"("session": )" << SESSION_ID << ", ";
   out << R"("food_temp_f": )" << output.food_temp_f << ", ";
   out << R"("ambient_temp_f": )" << output.ambient_temp_f << ", ";
   uint32_t duty_pct = output.duty_pct;
@@ -183,9 +108,34 @@ std::string serialize_output(const bbqctl::Output &output) {
   return out.str();
 }
 
-void bbq_task(void *pvParameter) {
-  esp_mqtt_client_handle_t client = (esp_mqtt_client_handle_t)pvParameter;
+void post_output(const bbqctl::Output& output)
+{
+    esp_http_client_config_t config = {
+        .url = "https://bbq.hjfreyer.com/api/readings",
+        .method = HTTP_METHOD_POST,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
 
+    std::string post_data = serialize_output(output);
+
+    esp_http_client_set_method(client, HTTP_METHOD_POST);
+    esp_http_client_set_post_field(client, post_data.c_str(), post_data.length());
+
+    esp_err_t err = esp_http_client_perform(client);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTPS Status = %d, content_length = %"PRId64,
+                esp_http_client_get_status_code(client),
+                esp_http_client_get_content_length(client));
+    } else {
+        ESP_LOGE(TAG, "Error perform http request %s", esp_err_to_name(err));
+    }
+    esp_http_client_cleanup(client);
+}
+
+
+void bbq_task(void *pvParameter) {
   int32_t tock = 0;
   while (true) {
     if (tock % CONFIG_MEASUREMENT_PERIOD == 0) {
@@ -201,11 +151,7 @@ void bbq_task(void *pvParameter) {
     if (tock % CONFIG_REPORTING_PERIOD == 0) {
       ESP_LOGI(TAG, "ambient: %f, food: %f, duty_pct: %d",
                output.ambient_temp_f, output.food_temp_f, output.duty_pct);
-      ESP_LOGI(TAG, "Publishing");
-      std::string reading_topic = topic_name("reading");
-      std::string serialized = serialize_output(output);
-      esp_mqtt_client_publish(client, reading_topic.c_str(), serialized.c_str(),
-                              serialized.length(), 0, 0);
+      post_output(output);
     }
 
     /* Set the GPIO level according to the state (LOW or HIGH)*/
@@ -233,6 +179,20 @@ static std::string settings_json(const bbqctl::Settings &settings) {
 
   return out.str();
 }
+
+/* An HTTP GET handler */
+static esp_err_t root_get_handler(httpd_req_t *req) {
+  ESP_LOGI(TAG, "GOT GET");
+  const std::string body =
+      R"(<script src="https://bbq.hjfreyer.com/remote.js"></script>)";
+  httpd_resp_send(req, body.c_str(), body.length());
+  return ESP_OK;
+}
+
+static const httpd_uri_t root_get = {.uri = "/",
+                                         .method = HTTP_GET,
+                                         .handler = root_get_handler,
+                                         .user_ctx = nullptr};
 
 /* An HTTP GET handler */
 static esp_err_t settings_get_handler(httpd_req_t *req) {
@@ -306,29 +266,6 @@ static void start_mdns_service() {
   mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
 }
 
-static void app_start(void) {
-  const esp_mqtt_client_config_t mqtt_cfg = {
-      .broker =
-          {
-              .address = {.uri = CONFIG_BROKER_URI},
-              .verification = {.crt_bundle_attach = esp_crt_bundle_attach},
-          },
-      .credentials = {
-          .username = CONFIG_BROKER_USERNAME,
-          .authentication = {.password = CONFIG_BROKER_PASSWORD},
-      }};
-
-  ESP_LOGI(TAG, "[APP] Free memory: %ld bytes", esp_get_free_heap_size());
-  esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
-  /* The last argument may be used to pass data to the event handler, in this
-   * example mqtt_event_handler */
-  esp_mqtt_client_register_event(client, (esp_mqtt_event_id_t)ESP_EVENT_ANY_ID,
-                                 (esp_event_handler_t)mqtt_event_handler, NULL);
-
-  esp_mqtt_client_start(client);
-
-  xTaskCreate(&bbq_task, "bbq_task", 8192, client, 5, NULL);
-}
 
 void simple_ota_example_task(void *pvParameter) {
   ESP_LOGI(TAG, "Starting OTA example task");
@@ -427,6 +364,7 @@ static httpd_handle_t start_webserver(void) {
   if (httpd_start(&server, &config) == ESP_OK) {
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
+    httpd_register_uri_handler(server, &root_get);
     httpd_register_uri_handler(server, &settings_get);
     httpd_register_uri_handler(server, &settings_post);
     return server;
@@ -521,5 +459,6 @@ extern "C" void app_main(void) {
   esp_wifi_set_ps(WIFI_PS_NONE);
 #endif  // CONFIG_EXAMPLE_CONNECT_WIFI
 
-  app_start();
+  ESP_LOGI(TAG, "[APP] Free memory: %ld bytes", esp_get_free_heap_size());
+  xTaskCreate(&bbq_task, "bbq_task", 8192, nullptr, 5, NULL);
 }
