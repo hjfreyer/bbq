@@ -253,7 +253,7 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
     }, []);
 
     if (!session) {
-        return <div>Not found!</div>
+        return <div className='p-4'>Loading...</div>
     }
 
     let notLatest = id == latestId ? <div /> : <div className='bg-orange-400 m-1 p-1 rounded'>This is not the latest session. <Link href={"/sessions/" + latestId}>Go to latest session</Link></div>

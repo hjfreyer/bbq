@@ -16,8 +16,8 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="{inter.className} flex-auto">
+    <html lang="en" className="min-h-full">
+      <body className="{inter.className}">
         <Header/>
         {children}
       </body>
