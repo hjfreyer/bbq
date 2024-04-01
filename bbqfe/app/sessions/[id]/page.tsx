@@ -13,7 +13,8 @@ import { db } from '@/lib/firebase';
 
 type Sample = {
     time: Timestamp,
-    probe_temps_f: number[],
+    ambient_temp_f: number,
+    food_temp_f: number,
     duty_pct: number,
 };
 
@@ -110,8 +111,8 @@ const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_dif
 
     useEffect(() => {
         let times = data.map(datum => datum.time.toDate().getTime() / 1000);
-        let y_values = data.map(datum => datum.probe_temps_f[0]);
-        let y2_values = data.map(datum => datum.probe_temps_f[1]);
+        let y_values = data.map(datum => datum.ambient_temp_f);
+        let y2_values = data.map(datum => datum.food_temp_f);
         let y2_diff = food_diffs;
         // data.map((datum, i) => {
         //     if (i == 0) {
@@ -229,7 +230,7 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
 
 
     useEffect(() => {
-        return onSnapshot(doc(db, "sessions-1", id), {
+        return onSnapshot(doc(db, "sessions", id), {
             next: (d) => {
                 let session = d.data() as Session;
 
@@ -242,7 +243,7 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
 
 
     useEffect(() => {
-        return onSnapshot(query(collection(db, "sessions-1"),
+        return onSnapshot(query(collection(db, "sessions"),
             orderBy('last_update', 'desc'),
             limit(1)), {
             next: (coll) => {
@@ -278,7 +279,7 @@ function SessionView({ id, session }: SessionViewProps) {
         const sample = temps[i];
         let begin = _.sortedIndexBy(temps, { time: { seconds: sample.time.seconds - 10 * 60 } } as Sample, 'time.seconds');
 
-        diffs.push((sample.probe_temps_f[1] - temps[begin].probe_temps_f[1]) / 10);
+        diffs.push((sample.food_temp_f - temps[begin].food_temp_f) / 10);
     }
 
 
@@ -289,14 +290,14 @@ function SessionView({ id, session }: SessionViewProps) {
         const begin = Math.max(temps.length - 21, 0);
         const end = temps.length - 1;
         const rate = diffs[end];
-        const delta = (target - temps[end].probe_temps_f[1]) / rate * 60;
+        const delta = (target - temps[end].food_temp_f) / rate * 60;
         estimate = delta.toFixed(0) + " seconds";
         doneat = "" + new Date(new Date().getTime() + delta * 1000);
     }
 
     const setTarget = (e: FormEvent) => {
         e.preventDefault();
-        updateDoc(doc(db, "sessions-1", id), {
+        updateDoc(doc(db, "sessions", id), {
             food_target: formTarget
         })
     };
@@ -316,8 +317,8 @@ function SessionView({ id, session }: SessionViewProps) {
 
         Time left: {estimate}<br />
         Done at: {doneat}<br />
-        Ambient: {temps[temps.length - 1]?.probe_temps_f[0].toFixed(1)}°F<br />
-        Food: {temps[temps.length - 1]?.probe_temps_f[1].toFixed(1)}°F<br />
+        Ambient: {temps[temps.length - 1]?.ambient_temp_f.toFixed(1)}°F<br />
+        Food: {temps[temps.length - 1]?.food_temp_f.toFixed(1)}°F<br />
         <MultilineChart dimensions={{
             width: 200,
             height: 200,
