@@ -16,7 +16,6 @@ if (admin.apps.length === 0) {
   }
 }
 
-let db = admin.firestore();
 
 export const dynamic = 'force-dynamic'; // static by default, unless reading the request
 
@@ -29,6 +28,9 @@ type Readings = {
 
 export async function POST(request: Request) {
   const readings = await request.json() as Readings;
+
+  const db = admin.firestore();
+
 
   const session_ref = db.collection("sessions").doc("" + readings.session);
   const now = new Date();
