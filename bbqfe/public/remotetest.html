@@ -1,1 +1,7 @@
-<script src="/remote.js"></script>
+<script>
+    (()=> {
+        const script = document.createElement('script');
+        script.src = window.location.origin + '/remote.js';
+        document.head.appendChild(script);
+    })();
+</script>

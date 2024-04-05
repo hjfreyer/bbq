@@ -1,8 +1,6 @@
 
 import 'https://code.jquery.com/jquery-3.7.1.min.js';
 
-
-
 $(() => {
   const bodyHtml = `
     <body>
@@ -26,7 +24,7 @@ $(() => {
   const foodTemp = $('#food-temp').text('ahoy');
 
   async function update() {
-    const result = await fetch('http://bbq.local/settings');
+    const result = await fetch('/settings');
 
     const json = await result.json();
 
