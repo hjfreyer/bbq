@@ -303,22 +303,27 @@ function SessionView({ id, session }: SessionViewProps) {
     };
 
     return <div>
-        <form onSubmit={setTarget}>
-            <label htmlFor="name">Target Temperature</label>
-            <input
-                id="name"
-                type="number"
-                value={formTarget}
-                onChange={(e) => setFormTarget(+e.target.value)}
-            />
-            <button type="submit">Submit</button>
-        </form>
+        <div className="grid grid-cols-2">
+            <label className="font-semibold" htmlFor="name">Target Temperature</label>
+            <form onSubmit={setTarget}>
+                <input
+                    id="name"
+                    type="number"
+                    value={formTarget}
+                    onChange={(e) => setFormTarget(+e.target.value)}
+                />
+                <button type="submit" className="bg-blue-500 hover:bg-blue-700 text-white font-bold px-2 mx-1 rounded" >Submit</button>
+            </form>
 
-
-        Time left: {estimate}<br />
-        Done at: {doneat}<br />
-        Ambient: {temps[temps.length - 1]?.ambient_temp_f.toFixed(1)}°F<br />
-        Food: {temps[temps.length - 1]?.food_temp_f.toFixed(1)}°F<br />
+            <div className='font-semibold'>Time left</div>
+            <div>{estimate}</div>
+            <div className='font-semibold'>Done at</div>
+            <div>{doneat}</div>
+            <div className='font-semibold'>Ambient</div>
+            <div>{temps[temps.length - 1]?.ambient_temp_f.toFixed(1)}°F</div>
+            <div className='font-semibold'>Food</div>
+            <div>{temps[temps.length - 1]?.food_temp_f.toFixed(1)}°F</div>
+        </div>
         <MultilineChart dimensions={{
             width: 200,
             height: 200,
