@@ -273,24 +273,18 @@ function SessionView({ id, session }: SessionViewProps) {
         return <div>Loading? Not Found?</div>;
     }
 
-    let temps = session.samples;
-    let diffs = [];
-    for (let i = 0; i < temps.length; i++) {
-        const sample = temps[i];
-        let begin = _.sortedIndexBy(temps, { time: { seconds: sample.time.seconds - 10 * 60 } } as Sample, 'time.seconds');
-
-        diffs.push((sample.food_temp_f - temps[begin].food_temp_f) / 10);
-    }
-
+    const times : Timestamp[] = session.samples.map((s) => s.time);
+    const ambients : number[] = movingAverage(times, session.samples.map((s) => s.ambient_temp_f), 20);
+    const foods : number[] = movingAverage(times, session.samples.map((s) => s.food_temp_f), 100);
+    const diffs = movingAverage(times, diff(times, foods), 500).map((x) => 60 * x);
 
     let target = session.food_target;
     let estimate = "";
     let doneat = "";
-    if (temps.length > 1) {
-        const begin = Math.max(temps.length - 21, 0);
-        const end = temps.length - 1;
+    if (times.length > 1) {
+        const end = times.length - 1;
         const rate = diffs[end];
-        const delta = (target - temps[end].food_temp_f) / rate * 60;
+        const delta = (target - foods[end]) / rate * 60;
         estimate = delta.toFixed(0) + " seconds";
         doneat = "" + new Date(new Date().getTime() + delta * 1000);
     }
@@ -301,6 +295,16 @@ function SessionView({ id, session }: SessionViewProps) {
             food_target: formTarget
         })
     };
+
+    const temps : Sample[] = [];
+    for (let i = 0; i < times.length; i++) {
+        temps.push({
+            time: times[i],
+            ambient_temp_f: ambients[i],
+            food_temp_f: foods[i],
+            duty_pct: session.samples[i].food_temp_f
+        })
+    }
 
     return <div>
         <div className="grid grid-cols-2">
@@ -320,9 +324,9 @@ function SessionView({ id, session }: SessionViewProps) {
             <div className='font-semibold'>Done at</div>
             <div>{doneat}</div>
             <div className='font-semibold'>Ambient</div>
-            <div>{temps[temps.length - 1]?.ambient_temp_f.toFixed(1)}°F</div>
+            <div>{ambients[ambients.length - 1]?.toFixed(1)}°F</div>
             <div className='font-semibold'>Food</div>
-            <div>{temps[temps.length - 1]?.food_temp_f.toFixed(1)}°F</div>
+            <div>{foods[foods.length - 1]?.toFixed(1)}°F</div>
         </div>
         <MultilineChart dimensions={{
             width: 200,
@@ -335,8 +339,30 @@ function SessionView({ id, session }: SessionViewProps) {
 
             }
         }}
-            data={session.samples}
+            data={temps}
             food_diffs={diffs}
         />
     </div>
+}
+
+function movingAverage(times: Timestamp[], data: number[], tau: number): number[] {
+    const res = [data[0]];
+    for (let i = 1; i < data.length; i++) {
+        let coeff = 1 - Math.exp(-(times[i].seconds - times[i - 1].seconds) / tau);
+        res.push(res[i-1] + coeff * (data[i] - res[i-1]));
+    }
+    return res;
+}
+
+function diff(times: Timestamp[], data: number[]): number[] {
+    const res = [0];
+    for (let i = 1; i < data.length; i++) {
+        const delta_t = times[i].seconds - times[i-1].seconds;
+        if (delta_t === 0) {
+            res.push(0);
+        } else {
+            res.push((data[i] - data[i-1]) / delta_t);
+        }
+    }
+    return res;
 }
