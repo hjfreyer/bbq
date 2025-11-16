@@ -9,7 +9,7 @@ import { db } from '@/lib/firebase';
 export default function Home() {
   const [sessions, setSessions] = useState<Session[]>([]);
   useEffect(() => {
-    return onSnapshot(query(collection(db, "sessions"),
+    return onSnapshot(query(collection(db, "sessions-2"),
       orderBy('last_update', 'desc')
     ), {
       next: (coll) => {

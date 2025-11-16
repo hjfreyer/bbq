@@ -141,7 +141,7 @@ const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_dif
             c.setScale('x', { min: prev_scale.min!, max });
         }
 
-    }, [data])
+    }, [data, food_diffs])
 
     useEffect(() => {
         if (svgRef.current != null && svgRef.current.childElementCount == 0) {
@@ -156,7 +156,6 @@ const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_dif
 export type Session = {
     last_update: Timestamp,
     food_target: number,
-    samples: Sample[],
 };
 
 export type SessionViewWrapperProps = {
@@ -207,6 +206,7 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
 
 
     const [session, setSession] = useState<Session | null>(null);
+    const [samples, setSamples] = useState<Sample[]>([]);
 
     const [latestId, setLatestId] = useState<string>(id);
 
@@ -230,12 +230,9 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
 
 
     useEffect(() => {
-        return onSnapshot(doc(db, "sessions", id), {
+        return onSnapshot(doc(db, "sessions-2", id), {
             next: (d) => {
                 let session = d.data() as Session;
-
-                session.samples = _.sortBy(session.samples, 'time.seconds');
-
                 setSession(session)
             }
         });
@@ -243,7 +240,17 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
 
 
     useEffect(() => {
-        return onSnapshot(query(collection(db, "sessions"),
+        return onSnapshot(collection(db, "sessions-2", id, "readings"), {
+            next: (d) => {
+                const samples: Sample[] = d.docs.map(d => (d.data() as Sample));
+                setSamples(_.sortBy(samples, 'time.seconds'))
+            }
+        });
+    }, [id]);
+
+
+    useEffect(() => {
+        return onSnapshot(query(collection(db, "sessions-2"),
             orderBy('last_update', 'desc'),
             limit(1)), {
             next: (coll) => {
@@ -260,22 +267,22 @@ export default function SessionViewWrapper({ params }: SessionViewWrapperProps) 
 
     return (<main className='p-4'>
         {notLatest}
-        <SessionView id={id} session={session} />
+        <SessionView id={id} session={session} samples={samples} />
     </main>)
 }
 
-export type SessionViewProps = { id: string, session: Session };
+export type SessionViewProps = { id: string, session: Session, samples: Sample[] };
 
-function SessionView({ id, session }: SessionViewProps) {
+function SessionView({ id, session, samples }: SessionViewProps) {
     const [formTarget, setFormTarget] = useState(session.food_target);
 
     if (session === null) {
         return <div>Loading? Not Found?</div>;
     }
 
-    const times : Timestamp[] = session.samples.map((s) => s.time);
-    const ambients : number[] = movingAverage(times, session.samples.map((s) => s.ambient_temp_f), 20);
-    const foods : number[] = movingAverage(times, session.samples.map((s) => s.food_temp_f), 100);
+    const times: Timestamp[] = samples.map((s) => s.time);
+    const ambients: number[] = movingAverage(times, samples.map((s) => s.ambient_temp_f), 20);
+    const foods: number[] = movingAverage(times, samples.map((s) => s.food_temp_f), 100);
     const diffs = movingAverage(times, diff(times, foods), 500).map((x) => 60 * x);
 
     let target = session.food_target;
@@ -291,18 +298,18 @@ function SessionView({ id, session }: SessionViewProps) {
 
     const setTarget = (e: FormEvent) => {
         e.preventDefault();
-        updateDoc(doc(db, "sessions", id), {
+        updateDoc(doc(db, "sessions-2", id), {
             food_target: formTarget
         })
     };
 
-    const temps : Sample[] = [];
+    const temps: Sample[] = [];
     for (let i = 0; i < times.length; i++) {
         temps.push({
             time: times[i],
             ambient_temp_f: ambients[i],
             food_temp_f: foods[i],
-            duty_pct: session.samples[i].food_temp_f
+            duty_pct: samples[i].food_temp_f
         })
     }
 
@@ -349,7 +356,7 @@ function movingAverage(times: Timestamp[], data: number[], tau: number): number[
     const res = [data[0]];
     for (let i = 1; i < data.length; i++) {
         let coeff = 1 - Math.exp(-(times[i].seconds - times[i - 1].seconds) / tau);
-        res.push(res[i-1] + coeff * (data[i] - res[i-1]));
+        res.push(res[i - 1] + coeff * (data[i] - res[i - 1]));
     }
     return res;
 }
@@ -357,11 +364,11 @@ function movingAverage(times: Timestamp[], data: number[], tau: number): number[
 function diff(times: Timestamp[], data: number[]): number[] {
     const res = [0];
     for (let i = 1; i < data.length; i++) {
-        const delta_t = times[i].seconds - times[i-1].seconds;
+        const delta_t = times[i].seconds - times[i - 1].seconds;
         if (delta_t === 0) {
             res.push(0);
         } else {
-            res.push((data[i] - data[i-1]) / delta_t);
+            res.push((data[i] - data[i - 1]) / delta_t);
         }
     }
     return res;

@@ -31,21 +31,17 @@ export async function POST(request: Request) {
 
   const db = admin.firestore();
 
-
-  const session_ref = db.collection("sessions").doc("" + readings.session);
+  const session_ref = db.collection("sessions-2").doc("" + readings.session);
   const now = new Date();
 
-  session_ref.set(
-    {
-      last_update: now,
-      samples: FieldValue.arrayUnion({
-        time: now,
-        duty_pct: readings.duty_pct,
-        ambient_temp_f: readings.ambient_temp_f,
-        food_temp_f: readings.food_temp_f,
-      }),
-    },
-    { merge: true }
-  );
+  session_ref.set({ last_update: now });
+
+  session_ref.collection("readings").doc('' + now.getTime()).set({
+    time: now,
+    duty_pct: readings.duty_pct,
+    ambient_temp_f: readings.ambient_temp_f,
+    food_temp_f: readings.food_temp_f,
+  });
+
   return new Response(`ok\n`);
 }
