@@ -1,7 +1,5 @@
 
 import admin from 'firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
-
 
 if (admin.apps.length === 0) {
   if (process.env.GCP_CREDS) {
@@ -15,7 +13,6 @@ if (admin.apps.length === 0) {
     });
   }
 }
-
 
 export const dynamic = 'force-dynamic'; // static by default, unless reading the request
 
@@ -34,7 +31,7 @@ export async function POST(request: Request) {
   const session_ref = db.collection("sessions-2").doc("" + readings.session);
   const now = new Date();
 
-  session_ref.set({ last_update: now });
+  session_ref.set({ last_update: now }, { merge: true });
 
   session_ref.collection("readings").doc('' + now.getTime()).set({
     time: now,
