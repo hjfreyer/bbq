@@ -6,7 +6,7 @@ import { collection, doc, query, limit, orderBy, Firestore, getDoc, onSnapshot, 
 import uPlot, { AlignedData, Axis, Options } from 'uplot';
 import '@/node_modules/uplot/dist/uPlot.min.css';
 import * as _ from "lodash";
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState, useLayoutEffect } from 'react';
 import Link from 'next/link';
 
 import { db } from '@/lib/firebase';
@@ -31,14 +31,26 @@ type Dimensions = {
     },
 }
 
-const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_diffs: number[], dimensions: Dimensions }) => {
+const MultilineChart = ({ data, food_diffs }: { data: Data, food_diffs: number[] }) => {
+    const [width, setWidth] = useState(0);
     const svgRef = useRef<HTMLDivElement>(null);
+    
+    useLayoutEffect(() => {
+        function updateSize() {
+            if (svgRef.current) {
+                setWidth(svgRef.current.clientWidth);
+            }
+        }
+        window.addEventListener('resize', updateSize);
+        updateSize();
+        return () => window.removeEventListener('resize', updateSize);
+    }, [svgRef]);
 
     let opts: Options = {
         title: "LET THERE BE FOOD",
         class: "my-chart",
-        width: 800,
-        height: 600,
+        width: 0,
+        height: 0,
         scales: {
             diff: {}
         },
@@ -95,14 +107,16 @@ const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_dif
             },
             {
                 label: "Temperature",
-                labelGap: 8,
-                labelSize: 8 + 12 + 8,
+                labelGap: 4,
+                labelSize: 4 + 12 + 4,
                 stroke: "red",
             },
             {
                 side: 1,
                 scale: 'diff',
-                label: '°F/min'
+                label: '°F/min',
+                labelGap: 4,
+                labelSize: 4 + 12 + 4,
             }
         ],
 
@@ -141,7 +155,11 @@ const MultilineChart = ({ data, food_diffs, dimensions }: { data: Data, food_dif
             c.setScale('x', { min: prev_scale.min!, max });
         }
 
-    }, [data, food_diffs])
+    }, [data, food_diffs]);
+
+    useEffect(()=>{
+        chart.current.setSize({width: width, height: width * 3/ 4});
+    }, [width]);
 
     useEffect(() => {
         if (svgRef.current != null && svgRef.current.childElementCount == 0) {
@@ -335,17 +353,7 @@ function SessionView({ id, session, samples }: SessionViewProps) {
             <div className='font-semibold'>Food</div>
             <div>{foods[foods.length - 1]?.toFixed(1)}°F</div>
         </div>
-        <MultilineChart dimensions={{
-            width: 200,
-            height: 200,
-            margin: {
-                top: 10,
-                left: 10,
-                right: 10,
-                bottom: 10
-
-            }
-        }}
+        <MultilineChart 
             data={temps}
             food_diffs={diffs}
         />
